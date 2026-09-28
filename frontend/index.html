@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pharmagenix</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Pharmagenix</h1>
+    <span class="subtitle">A GenAI-powered drug–gene interaction explorer</span>
+    <nav><a href="/admin">Admin console</a></nav>
+  </header>
+
+  <main class="container">
+    <!-- 1. Search -->
+    <section class="card">
+      <form id="search-form" class="stack">
+        <div>
+          <label for="entities">Gene or drug name</label>
+          <div class="row">
+            <input id="entities" class="grow" type="text" autocomplete="off" required
+                   placeholder="For example, CYP2C19, BRAF or clopidogrel (separate multiple entries with commas)">
+            <select id="entity-type" aria-label="Entity type">
+              <option value="auto">Detect automatically</option>
+              <option value="gene">Gene</option>
+              <option value="drug">Drug</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row small">
+          <label class="file-btn">Upload gene panel (.txt / .csv / .tsv)
+            <input id="panel-file" type="file" accept=".txt,.csv,.tsv" hidden>
+          </label>
+          <span id="panel-info" class="muted"></span>
+        </div>
+
+        <fieldset>
+          <legend>Relationship types</legend>
+          <div id="relation-types" class="chips"></div>
+        </fieldset>
+
+        <div class="row">
+          <label class="chip"><input id="compare" type="checkbox"> <span id="compare-label">Generate comparison report (with Claude)</span></label>
+          <button id="submit-btn" type="submit">Explore</button>
+        </div>
+      </form>
+    </section>
+
+    <div id="status" class="status hidden" role="status"></div>
+
+    <section id="results" class="hidden">
+      <div id="source-status" class="source-status"></div>
+      <p id="normalisation" class="normalisation small hidden"></p>
+
+      <!-- Output 1: narrative summary -->
+      <section class="card">
+        <h2>1 · Narrative summary</h2>
+        <div id="reports" class="reports"></div>
+      </section>
+
+      <!-- Output 2: structured table -->
+      <section class="card">
+        <h2>2 · Structured DGI table</h2>
+        <div class="table-tools">
+          <input id="table-filter" type="search" placeholder="Filter genes, drugs or variants…">
+          <select id="table-category" aria-label="Filter by relationship type"><option value="">All relationship types</option></select>
+          <span id="table-count" class="muted small"></span>
+          <button id="export-csv" class="secondary small" type="button">Export CSV</button>
+        </div>
+        <div class="table-wrap"><table id="dgi-table"></table></div>
+      </section>
+
+      <!-- Output 3: relationship network -->
+      <section class="card">
+        <h2>3 · Relationship network</h2>
+        <div class="row small" style="margin-bottom:10px">
+          <label for="edge-limit">Edges shown</label>
+          <select id="edge-limit">
+            <option value="60">Top 60</option>
+            <option value="150" selected>Top 150</option>
+            <option value="0">All</option>
+          </select>
+          <button id="network-fit" class="secondary small" type="button">Reset view</button>
+        </div>
+        <div id="network-legend" class="legend"></div>
+        <div id="network"></div>
+        <div id="network-info" class="network-info muted">Select a node or edge to view details.</div>
+      </section>
+
+      <!-- Australian context: PBS listing (not DGI evidence) -->
+      <section class="card">
+        <h2>4 · Australian availability (PBS)</h2>
+        <div id="availability"></div>
+      </section>
+
+      <!-- Re-ask / follow-up -->
+      <section class="card">
+        <h2>Ask again or follow up</h2>
+        <form id="ask-form" class="stack">
+          <textarea id="followup" rows="3" placeholder="For example: focus on how CYP2C19*17 affects the response to clopidogrel"></textarea>
+          <div class="row">
+            <label class="chip"><input id="ask-compare" type="checkbox"> Generate comparison report (with Claude)</label>
+            <button type="submit">Regenerate from current evidence</button>
+            <span class="muted small">Existing data are reused when the entities and relationship types are unchanged. Use the form above to start a new query.</span>
+          </div>
+        </form>
+      </section>
+    </section>
+  </main>
+
+  <footer>For research purposes only. This information is not clinical advice. Data sources: DGIdb · ChEMBL (CC BY-SA 3.0) · CPIC · PharmGKB/ClinPGx · PubTator3 · HGNC · PBS Schedule (© Commonwealth of Australia) · DrugBank</footer>
+</body>
+</html>

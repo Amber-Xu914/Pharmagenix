@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pharmagenix Admin</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script type="module" src="js/admin.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Admin console</h1>
+    <span class="subtitle">Prompt logs · Templates · Failed responses · Feedback</span>
+    <nav><a href="/">← Back to explorer</a></nav>
+  </header>
+
+  <main class="container">
+    <section class="card" id="login-card">
+      <form id="login-form" class="row">
+        <label for="admin-token">Admin token</label>
+        <input id="admin-token" type="password" autocomplete="current-password" placeholder="ADMIN_TOKEN from the backend .env file">
+        <button type="submit">Sign in</button>
+        <span id="login-error" class="report-error small"></span>
+      </form>
+    </section>
+
+    <section id="admin-app" class="card hidden">
+      <nav class="tabs" id="tabs">
+        <button data-tab="logs" class="active">Prompt logs</button>
+        <button data-tab="templates">Templates</button>
+        <button data-tab="failures">Failed / flagged</button>
+        <button data-tab="feedback">User feedback</button>
+        <button data-tab="stats">Model comparison</button>
+      </nav>
+
+      <!-- Prompt logs -->
+      <div data-panel="logs">
+        <div class="row" style="margin-bottom:10px">
+          <select id="log-status"><option value="">All statuses</option><option>success</option><option>flagged</option><option>failed</option></select>
+          <select id="log-provider"><option value="">All providers</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select>
+          <button id="log-refresh" class="secondary small" type="button">Refresh</button>
+          <span id="log-pager" class="muted small"></span>
+        </div>
+        <div class="split">
+          <div class="table-wrap"><table id="log-table"></table></div>
+          <div id="log-detail" class="muted">Select a log to view its complete prompt and raw response.</div>
+        </div>
+      </div>
+
+      <!-- Templates -->
+      <div data-panel="templates" class="hidden">
+        <div class="split">
+          <div class="table-wrap"><table id="template-table"></table></div>
+          <form id="template-form" class="stack">
+            <div class="row">
+              <label for="tpl-name">Name</label>
+              <input id="tpl-name" type="text" value="dgi_report" required>
+              <span id="tpl-source" class="muted small"></span>
+            </div>
+            <div>
+              <label for="tpl-system">System prompt</label>
+              <textarea id="tpl-system" rows="8" required></textarea>
+            </div>
+            <div>
+              <label for="tpl-user">User template (Jinja2)</label>
+              <textarea id="tpl-user" rows="14" required></textarea>
+              <p class="muted small">Available variables: entities, entity_type, relation_types, relation_labels, followup_question,
+                evidence_block, evidence_count, source_status</p>
+            </div>
+            <div>
+              <label for="tpl-notes">Change notes</label>
+              <input id="tpl-notes" type="text" style="width:100%">
+            </div>
+            <div class="row">
+              <label class="chip"><input id="tpl-activate" type="checkbox" checked> Activate after saving</label>
+              <button type="submit">Save as new version</button>
+              <input id="tpl-preview-query" type="text" placeholder="Query ID" size="8">
+              <button id="tpl-preview" class="secondary" type="button">Preview with query</button>
+            </div>
+            <div id="tpl-message" class="small"></div>
+            <pre id="tpl-preview-out" class="block hidden"></pre>
+          </form>
+        </div>
+      </div>
+
+      <!-- Failures -->
+      <div data-panel="failures" class="hidden">
+        <div class="row" style="margin-bottom:10px">
+          <button id="failure-refresh" class="secondary small" type="button">Refresh</button>
+          <span id="failure-pager" class="muted small"></span>
+        </div>
+        <div class="table-wrap"><table id="failure-table"></table></div>
+      </div>
+
+      <!-- Feedback -->
+      <div data-panel="feedback" class="hidden">
+        <div class="row" style="margin-bottom:10px">
+          <select id="feedback-max"><option value="">All ratings</option><option value="2">≤ 2 stars</option><option value="3">≤ 3 stars</option></select>
+          <span id="feedback-pager" class="muted small"></span>
+        </div>
+        <div class="table-wrap"><table id="feedback-table"></table></div>
+      </div>
+
+      <!-- Stats -->
+      <div data-panel="stats" class="hidden">
+        <div id="stats" class="stat-grid"></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

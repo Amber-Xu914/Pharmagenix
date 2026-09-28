@@ -1,0 +1,26 @@
+from flask import jsonify, request
+from werkzeug.exceptions import HTTPException
+
+
+class APIError(Exception):
+    def __init__(self, message, status=400):
+        super().__init__(message)
+        self.message = message
+        self.status = status
+
+
+def register_error_handlers(app):
+    @app.errorhandler(APIError)
+    def handle_api_error(err):
+        return jsonify(error=err.message), err.status
+
+    @app.errorhandler(HTTPException)
+    def handle_http_error(err):
+        if request.path.startswith("/api/"):
+            return jsonify(error=err.description), err.code
+        return err
+
+    @app.errorhandler(Exception)
+    def handle_unexpected(err):
+        app.logger.exception("Unhandled error")
+        return jsonify(error="Internal server error"), 500
