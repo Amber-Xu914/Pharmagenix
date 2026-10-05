@@ -5,15 +5,16 @@ curated reference datasets held in MySQL (HGNC, ChEMBL, CPIC and the Australian 
 DGIdb, PharmGKB (ClinPGx), PubTator3 and DrugBank. An LLM then writes a narrative report in which every claim
 cites its evidence. Results are shown three ways (a text summary, a structured DGI table and a relationship network), plus the
 drugs' Australian PBS listing status.
-Users can rate answers, leave suggestions and ask follow-up questions. An admin console shows prompt logs, lets
+Users can rate answers, leave suggestions and ask follow-up questions, and can create an account and log in with
+their email address from the top-right corner of the explorer. An admin console shows prompt logs, lets
 admins edit prompt templates and lists failed responses.
 
-| Layer | Technology |
-|---|---|
+| Layer    | Technology                                                                                                  |
+| -------- | ----------------------------------------------------------------------------------------------------------- |
 | Frontend | Plain JavaScript (ES modules, no build step), Cytoscape.js for the network, marked + DOMPurify for Markdown |
-| Backend | Flask 3 + Flask-SQLAlchemy |
-| Database | MySQL 8 (developed on 8.4; uses JSON columns) |
-| LLM | Primary: OpenAI (`OPENAI_MODEL`, default `gpt-6-luna`). Comparison: Claude Haiku 4.5 |
+| Backend  | Flask 3 + Flask-SQLAlchemy                                                                                  |
+| Database | MySQL 8 (developed on 8.4; uses JSON columns)                                                               |
+| LLM      | Primary: OpenAI (`OPENAI_MODEL`, default `gpt-6-luna`). Comparison: Claude Haiku 4.5                        |
 
 ## Quick start
 
@@ -37,7 +38,7 @@ flask --app run import-data   # load HGNC, ChEMBL, CPIC and PBS (about 3 minutes
 flask --app run run --debug --host 127.0.0.1 --port 5001  # http://127.0.0.1:5001
 ```
 
-The explorer is at <http://localhost:5000> and the admin console at <http://localhost:5000/admin> (log in with the
+The explorer is at <http://localhost:5001> and the admin console at <http://localhost:5001/admin> (log in with the
 `ADMIN_TOKEN` from `.env`). Flask serves the frontend directly. To host the frontend separately, set
 `window.DGI_API_BASE = "http://<backend-host>"` in the page and configure `CORS_ORIGINS`.
 
@@ -54,12 +55,12 @@ normalisation, curated action types, prescribing guidelines and Australian conte
 source's tables in one transaction and records the data version in `source_releases`, and every evidence item from a
 local source carries that version.
 
-| Dataset | Used for | Imported | Rows (Sept 2026) | Licence |
-|---|---|---|---|---|
-| [HGNC](https://www.genenames.org/download/) | Normalising gene input: symbols, previous symbols, aliases, Ensembl and NCBI Gene IDs (`P53 → TP53`) | Full complete-set TSV | ~45k genes, ~106k names | CC0 |
-| [ChEMBL](https://www.ebi.ac.uk/chembl/) | Curated mechanisms of action with action types (inhibitor, agonist…), which most DGIdb interactions lack; drug synonyms and trade names (`Plavix → CLOPIDOGREL`) | Mechanism table plus drug names (including salt forms' trade names), via the ChEMBL API | ~5.6k drugs, ~58k names, ~12k mechanism–gene rows | CC BY-SA 3.0 (attribution required) |
-| [CPIC](https://cpicpgx.org/) | Genotype/phenotype-based prescribing recommendations for the SNP-specific relationship type | Pairs and recommendations, via the CPIC API | ~630 pairs, ~2.1k recommendations | See cpicpgx.org |
-| [PBS Schedule](https://www.pbs.gov.au/) | Whether a drug is PBS-listed in Australia, its item codes, forms and benefit type (shown separately; not DGI evidence and not sent to the LLM) | Current month's schedule, via the PBS public API | ~15k item/brand rows | © Commonwealth of Australia; redistribution permitted, modification not |
+| Dataset                                     | Used for                                                                                                                                                         | Imported                                                                                | Rows (Sept 2026)                                  | Licence                                                                 |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------- |
+| [HGNC](https://www.genenames.org/download/) | Normalising gene input: symbols, previous symbols, aliases, Ensembl and NCBI Gene IDs (`P53 → TP53`)                                                             | Full complete-set TSV                                                                   | ~45k genes, ~106k names                           | CC0                                                                     |
+| [ChEMBL](https://www.ebi.ac.uk/chembl/)     | Curated mechanisms of action with action types (inhibitor, agonist…), which most DGIdb interactions lack; drug synonyms and trade names (`Plavix → CLOPIDOGREL`) | Mechanism table plus drug names (including salt forms' trade names), via the ChEMBL API | ~5.6k drugs, ~58k names, ~12k mechanism–gene rows | CC BY-SA 3.0 (attribution required)                                     |
+| [CPIC](https://cpicpgx.org/)                | Genotype/phenotype-based prescribing recommendations for the SNP-specific relationship type                                                                      | Pairs and recommendations, via the CPIC API                                             | ~630 pairs, ~2.1k recommendations                 | See cpicpgx.org                                                         |
+| [PBS Schedule](https://www.pbs.gov.au/)     | Whether a drug is PBS-listed in Australia, its item codes, forms and benefit type (shown separately; not DGI evidence and not sent to the LLM)                   | Current month's schedule, via the PBS public API                                        | ~15k item/brand rows                              | © Commonwealth of Australia; redistribution permitted, modification not |
 
 ```bash
 flask --app run import-data                 # all four, in dependency order (HGNC → ChEMBL → CPIC → PBS)
@@ -120,11 +121,12 @@ backend/
   app/
     __init__.py               create_app: registers blueprints, serves the frontend static files
     config.py                 all settings (read from .env)
-    models.py                 queries / reports / prompt_logs / prompt_templates / feedback
+    models.py                 queries / reports / prompt_logs / prompt_templates / feedback / users
     cli.py                    flask init-db / import-data / reference-status / dump-schema
     routes/
       explore.py              /api/meta, /api/explore, /api/queries/<id>[/ask], /api/panels/parse
       feedback.py             /api/reports/<id>/feedback
+      auth.py                 /api/auth/* (user accounts: register, login, logout, me)
       admin.py                /api/admin/* (X-Admin-Token auth)
     reference/                local datasets
       models.py               genes, gene_aliases, drugs, drug_synonyms, drug_mechanisms, cpic_*, pbs_items,
@@ -144,26 +146,29 @@ backend/
 frontend/
   index.html  admin.html
   css/style.css
-  js/ api.js  main.js  summary.js  table.js  network.js  availability.js  admin.js  util.js
+  js/ api.js  main.js  auth.js  background.js  profile.js  summary.js  table.js  network.js  availability.js  admin.js  util.js
 ```
 
 ## API reference
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/meta` | Relationship types, model info, limits |
-| POST | `/api/panels/parse` | Upload a gene panel file (multipart field `file`) → list of genes |
-| POST | `/api/explore` | `{entities, entity_type: auto\|gene\|drug, relation_types[], compare}` |
-| GET | `/api/queries/<id>` | Fetch the full result of a past query |
-| POST | `/api/queries/<id>/ask` | Follow-up / re-ask `{followup_question, compare}`; reuses the evidence when entities and relation types are unchanged |
-| POST | `/api/reports/<id>/feedback` | `{rating 1–5, comment, suggestion}` |
-| GET | `/api/admin/prompt-logs[/<id>]` | Prompt logs (filter by status / provider) |
-| GET/POST | `/api/admin/templates` | List templates / save a new version |
-| POST | `/api/admin/templates/<id>/activate` | Switch the active template |
-| POST | `/api/admin/templates/preview` | Render a template against a stored query's evidence (no LLM call) |
-| GET | `/api/admin/failures` | Failed and flagged reports |
-| POST | `/api/admin/reports/<id>/retry` | Regenerate with the current template |
-| GET | `/api/admin/feedback`, `/api/admin/stats` | User feedback; per-model success rate, latency and average rating |
+| Method   | Path                                      | Description                                                                                                           |
+| -------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| GET      | `/api/meta`                               | Relationship types, model info, limits, imported reference data versions                                              |
+| POST     | `/api/panels/parse`                       | Upload a gene panel file (multipart field `file`) → list of genes                                                     |
+| POST     | `/api/explore`                            | `{entities, entity_type: auto\|gene\|drug, relation_types[], compare}`                                                |
+| GET      | `/api/queries/<id>`                       | Fetch the full result of a past query, plus `entity_details` (HGNC / ChEMBL fields for the results header)            |
+| POST     | `/api/queries/<id>/ask`                   | Follow-up / re-ask `{followup_question, compare}`; reuses the evidence when entities and relation types are unchanged |
+| POST     | `/api/reports/<id>/feedback`              | `{rating 1–5, comment, suggestion}`                                                                                   |
+| POST     | `/api/auth/register`, `/api/auth/login`   | `{email, password}` (email only, case-insensitive); sets a signed session cookie                                      |
+| POST     | `/api/auth/logout`                        | Clear the session                                                                                                     |
+| GET      | `/api/auth/me`                            | The signed-in user, or `null`                                                                                         |
+| GET      | `/api/admin/prompt-logs[/<id>]`           | Prompt logs (filter by status / provider)                                                                             |
+| GET/POST | `/api/admin/templates`                    | List templates / save a new version                                                                                   |
+| POST     | `/api/admin/templates/<id>/activate`      | Switch the active template                                                                                            |
+| POST     | `/api/admin/templates/preview`            | Render a template against a stored query's evidence (no LLM call)                                                     |
+| GET      | `/api/admin/failures`                     | Failed and flagged reports                                                                                            |
+| POST     | `/api/admin/reports/<id>/retry`           | Regenerate with the current template                                                                                  |
+| GET      | `/api/admin/feedback`, `/api/admin/stats` | User feedback; per-model success rate, latency and average rating                                                     |
 
 ## Things to check and known limitations
 
