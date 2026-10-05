@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 
 from dotenv import load_dotenv
 
@@ -13,6 +14,11 @@ class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me")
     ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "change-me-admin-token")
     CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
+
+    # User login uses Flask's signed session cookie, so SECRET_KEY must be set to a random value in .env.
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = "Lax"
+    PERMANENT_SESSION_LIFETIME = timedelta(days=7)
 
     SQLALCHEMY_DATABASE_URI = os.getenv(
         "DATABASE_URL",

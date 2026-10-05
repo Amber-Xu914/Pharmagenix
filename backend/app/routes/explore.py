@@ -2,7 +2,8 @@ from flask import Blueprint, current_app, jsonify, request
 
 from ..errors import APIError
 from ..extensions import db
-from ..models import Query
+from ..models import Query, iso
+from ..reference.lookup import entity_details, latest_releases
 from ..services.explorer import run_exploration
 from ..services.llm import provider_info
 from ..services.panel import parse_gene_panel
@@ -13,6 +14,13 @@ bp = Blueprint("explore", __name__)
 MAX_PANEL_BYTES = 200_000
 
 
+def _query_response(query, status=200):
+    data = query.to_dict()
+    # Aligned with evidence.normalisation; feeds the entity header on the results page.
+    data["entity_details"] = entity_details((query.evidence or {}).get("normalisation"))
+    return jsonify(data), status
+
+
 @bp.get("/meta")
 def meta():
     """Everything the frontend needs to render the search form."""
@@ -21,6 +29,9 @@ def meta():
         default_relation_types=DEFAULT_RELATION_TYPES,
         providers=provider_info(),
         limits={"max_entities": current_app.config["MAX_ENTITIES"]},
+        # Shown on the home page as "reference data last updated"; empty until `import-data` has run.
+        reference_data=[{"source": source, "version": r.version, "imported_at": iso(r.imported_at)}
+                        for source, r in latest_releases().items()],
     )
 
 
@@ -46,7 +57,7 @@ def explore():
         compare=bool(body.get("compare")),
         followup_question=body.get("followup_question"),
     )
-    return jsonify(query.to_dict()), 201
+    return _query_response(query, 201)
 
 
 @bp.get("/queries")
@@ -58,7 +69,7 @@ def list_queries():
 
 @bp.get("/queries/<int:query_id>")
 def get_query(query_id):
-    return jsonify(db.get_or_404(Query, query_id).to_dict())
+    return _query_response(db.get_or_404(Query, query_id))
 
 
 @bp.post("/queries/<int:query_id>/ask")
@@ -74,4 +85,4 @@ def ask_again(query_id):
         followup_question=body.get("followup_question"),
         parent=parent,
     )
-    return jsonify(query.to_dict()), 201
+    return _query_response(query, 201)

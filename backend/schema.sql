@@ -168,6 +168,16 @@ CREATE TABLE source_releases (
 
 CREATE INDEX ix_source_releases_source ON source_releases (source);
 
+CREATE TABLE users (
+	id INTEGER NOT NULL AUTO_INCREMENT,
+	email VARCHAR(254) NOT NULL,
+	password_hash VARCHAR(255) NOT NULL,
+	created_at DATETIME NOT NULL,
+	last_login_at DATETIME,
+	PRIMARY KEY (id),
+	UNIQUE (email)
+);
+
 CREATE TABLE drug_synonyms (
 	id INTEGER NOT NULL AUTO_INCREMENT,
 	chembl_id VARCHAR(20) NOT NULL,

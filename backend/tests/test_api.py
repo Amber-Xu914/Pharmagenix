@@ -2,6 +2,19 @@ def test_meta(client):
     data = client.get("/api/meta").get_json()
     assert {r["key"] for r in data["relation_types"]} >= {"inhibit", "induce", "bind", "snp"}
     assert data["providers"]["primary"]["provider"] == "openai"
+    assert data["reference_data"] == []
+
+
+def test_meta_lists_reference_data(app, client):
+    from app.extensions import db
+    from app.reference.models import SourceRelease
+
+    db.session.add_all([SourceRelease(source="pbs", version="PBS Schedule 4751", status="ok"),
+                        SourceRelease(source="cpic", version="broken", status="failed")])
+    db.session.commit()
+    data = client.get("/api/meta").get_json()
+    assert [(r["source"], r["version"]) for r in data["reference_data"]] == [("pbs", "PBS Schedule 4751")]
+    assert data["reference_data"][0]["imported_at"].endswith("Z")
 
 
 def test_explore_with_comparison(client, fake_sources):
@@ -15,6 +28,33 @@ def test_explore_with_comparison(client, fake_sources):
     assert all(r["status"] == "success" for r in data["reports"])
     assert data["reports"][1]["citations"] == ["E1", "E2"]
     assert len(data["evidence"]["table"]) == 2
+
+
+def test_query_includes_entity_details(app, client):
+    from app.extensions import db
+    from app.models import Query
+    from app.reference.models import Drug, Gene
+
+    db.session.add_all([
+        Gene(hgnc_id="HGNC:2625", symbol="CYP2D6", name="cytochrome P450 family 2 subfamily D member 6",
+             location="22q13.2", ensembl_gene_id="ENSG00000100197", uniprot_ids=["P10635"]),
+        Drug(chembl_id="CHEMBL485", pref_name="CODEINE", max_phase=4),
+    ])
+    normalisation = [
+        {"input": "CYP2D6", "name": "CYP2D6", "type": "gene", "id": "HGNC:2625"},
+        {"input": "codeine", "name": "CODEINE", "type": "drug", "id": "CHEMBL485"},
+        {"input": "xyz", "name": "XYZ", "type": None, "id": None},
+    ]
+    query = Query(entities=["CYP2D6", "codeine", "xyz"], relation_types=["snp"], status="complete",
+                  evidence={"normalisation": normalisation, "items": [], "table": []})
+    db.session.add(query)
+    db.session.commit()
+
+    details = client.get(f"/api/queries/{query.id}").get_json()["entity_details"]
+    assert details[0]["location"] == "22q13.2"
+    assert details[0]["uniprot_ids"] == ["P10635"]
+    assert details[1]["max_phase"] == 4
+    assert details[2] is None
 
 
 def test_explore_validation(client, fake_sources):
