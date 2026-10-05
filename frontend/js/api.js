@@ -26,6 +26,10 @@ export const api = {
   getQuery: (id) => request("GET", `/api/queries/${id}`),
   ask: (id, body) => request("POST", `/api/queries/${id}/ask`, { body }),
   feedback: (reportId, body) => request("POST", `/api/reports/${reportId}/feedback`, { body }),
+  me: () => request("GET", "/api/auth/me"),
+  login: (body) => request("POST", "/api/auth/login", { body }),
+  register: (body) => request("POST", "/api/auth/register", { body }),
+  logout: () => request("POST", "/api/auth/logout"),
 };
 
 export function adminApi(token) {

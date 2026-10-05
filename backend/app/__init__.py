@@ -20,12 +20,14 @@ def create_app(config_class=Config):
     CORS(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})
 
     from .routes.admin import bp as admin_bp
+    from .routes.auth import bp as auth_bp
     from .routes.explore import bp as explore_bp
     from .routes.feedback import bp as feedback_bp
 
     app.register_blueprint(explore_bp, url_prefix="/api")
     app.register_blueprint(feedback_bp, url_prefix="/api")
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
+    app.register_blueprint(auth_bp, url_prefix="/api/auth")
 
     from .cli import register_cli
 

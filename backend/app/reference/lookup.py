@@ -3,7 +3,7 @@
 import re
 
 from ..extensions import db
-from .models import CpicPair, CpicRecommendation, DrugMechanism, PbsItem, SourceRelease
+from .models import CpicPair, CpicRecommendation, Drug, DrugMechanism, Gene, PbsItem, SourceRelease
 from .text import norm, strip_salt
 
 CLASSIFICATION_ORDER = {"Strong": 0, "Moderate": 1, "Optional": 2}
@@ -13,6 +13,40 @@ STANDARD_CARE_RE = re.compile(r"standard dos|recommended starting dose|per stand
                               re.IGNORECASE)
 BENEFIT_TYPES = {"U": "Unrestricted", "R": "Restricted benefit", "A": "Authority required",
                  "S": "Authority required (streamlined)"}
+
+
+def entity_details(normalisation):
+    """Descriptive fields for the results page header, one dict per normalised entity (None if unknown).
+
+    Looked up when a query is displayed rather than stored with its evidence, so older queries get them too.
+    """
+    details = []
+    for entry in normalisation or []:
+        record = None
+        if entry.get("type") == "gene" and entry.get("id"):
+            gene = db.session.get(Gene, entry["id"])
+            if gene:
+                record = {
+                    "full_name": gene.name,
+                    "location": gene.location,
+                    "locus_type": gene.locus_type,
+                    "hgnc_id": gene.hgnc_id,
+                    "ensembl_gene_id": gene.ensembl_gene_id,
+                    "entrez_id": gene.entrez_id,
+                    "uniprot_ids": gene.uniprot_ids or [],
+                }
+        elif entry.get("type") == "drug" and entry.get("id"):
+            drug = db.session.get(Drug, entry["id"])
+            if drug:
+                record = {
+                    "full_name": drug.pref_name,
+                    "chembl_id": drug.chembl_id,
+                    "molecule_type": drug.molecule_type,
+                    "max_phase": drug.max_phase,
+                    "first_approval": drug.first_approval,
+                }
+        details.append(record)
+    return details
 
 
 def latest_releases():

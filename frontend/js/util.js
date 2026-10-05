@@ -7,7 +7,7 @@ export function el(tag, attrs = {}, ...children) {
     else if (key === "html") node.innerHTML = value; // only pass sanitised HTML here
     else node.setAttribute(key, value === true ? "" : value);
   }
-  for (const child of children.flat()) {
+  for (const child of children.flat(Infinity)) {
     if (child == null || child === false) continue;
     node.append(child instanceof Node ? child : String(child));
   }

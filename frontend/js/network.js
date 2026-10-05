@@ -103,15 +103,17 @@ export class NetworkView {
     this.cy?.elements().removeClass("faded focused");
   }
 
+  /** Returns false when the evidence isn't drawn (e.g. hidden by the edge limit). */
   focusEvidence(eid) {
-    if (!this.cy) return;
+    if (!this.cy) return false;
     const edges = this.cy.edges().filter((e) => e.data("evidence_ids").includes(eid));
-    if (!edges.length) return;
+    if (!edges.length) return false;
     this.clearFocus();
     this.cy.elements().addClass("faded");
     edges.union(edges.connectedNodes()).removeClass("faded");
     edges.addClass("focused");
     this.cy.animate({ center: { eles: edges }, duration: 300 });
+    return true;
   }
 }
 

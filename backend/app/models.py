@@ -202,3 +202,23 @@ class Feedback(db.Model):
             "suggestion": self.suggestion,
             "created_at": iso(self.created_at),
         }
+
+
+class User(db.Model):
+    """A user account for the explorer. Only the password hash is stored."""
+
+    __tablename__ = "users"
+
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(254), nullable=False, unique=True)  # stored lower-cased
+    password_hash = db.Column(db.String(255), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    last_login_at = db.Column(db.DateTime)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "email": self.email,
+            "created_at": iso(self.created_at),
+            "last_login_at": iso(self.last_login_at),
+        }

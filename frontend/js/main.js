@@ -1,12 +1,17 @@
 import { api } from "./api.js";
 import { renderAvailability } from "./availability.js";
 import { NetworkView } from "./network.js";
+import {
+  headlineNumbers, interactionRows, pgxAlerts, queryEntities, renderAlerts, renderHeader, renderLiterature, renderPgx,
+  scopeEvidence,
+} from "./profile.js";
 import { renderReports } from "./summary.js";
 import { DgiTable } from "./table.js";
 import { categoryColor, el } from "./util.js";
 
 const $ = (id) => document.getElementById(id);
-const state = { meta: null, query: null };
+// focus: the entity every section is narrowed to (null = all); scoped: the evidence for that focus.
+const state = { meta: null, query: null, entities: [], focus: null, scoped: null, view: "table", networkStale: true };
 
 const table = new DgiTable({
   table: $("dgi-table"),
@@ -14,14 +19,10 @@ const table = new DgiTable({
   categorySelect: $("table-category"),
   countEl: $("table-count"),
   exportButton: $("export-csv"),
+  toggleButton: $("toggle-unspecified"),
 });
 const network = new NetworkView({ container: $("network"), info: $("network-info"), legend: $("network-legend") });
-
-const SOURCE_NAMES = {
-  dgidb: "DGIdb", chembl: "ChEMBL", cpic: "CPIC", pharmgkb: "PharmGKB",
-  pubtator: "PubTator", drugbank: "DrugBank", pbs: "PBS",
-};
-const SOURCE_STATES = { ok: "✓", error: "✗ failed", skipped: "not requested", disabled: "not enabled" };
+const scrollBehavior = () => (matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth");
 
 async function init() {
   try {
@@ -31,13 +32,14 @@ async function init() {
     return;
   }
   renderRelationChips();
+  renderDataVersion(state.meta.reference_data || []);
   const comparison = state.meta.providers.comparison;
   $("compare-label").textContent = `Generate comparison report (with Claude)${comparison.enabled ? "" : " — API key not configured"}`;
 
   const queryId = new URLSearchParams(location.search).get("q");
   if (queryId) {
     try {
-      showQuery(await api.getQuery(queryId));
+      showQuery(await api.getQuery(queryId), { hash: location.hash });
     } catch (err) {
       showStatus(`Could not load query #${queryId}: ${err.message}`, "error");
     }
@@ -51,6 +53,17 @@ function renderRelationChips() {
       el("input", { type: "checkbox", name: "relation", value: key, checked: selected.has(key) }),
       el("span", { class: "dot", style: `background:${categoryColor(key)}` }),
       label)));
+}
+
+/** "Reference data last updated …", like Open Targets' "Last update"; the full versions are in the tooltip. */
+function renderDataVersion(releases) {
+  const box = $("data-version");
+  box.classList.toggle("hidden", !releases.length);
+  if (!releases.length) return;
+  const latest = releases.map((r) => r.imported_at).sort().at(-1);
+  const date = new Date(latest).toLocaleDateString("en-AU", { day: "numeric", month: "long", year: "numeric" });
+  box.replaceChildren("Reference data last updated: ", el("a", { href: "#about" }, date));
+  box.title = releases.map((r) => `${r.source.toUpperCase()}: ${r.version}`).join("\n");
 }
 
 function selectedRelations() {
@@ -81,38 +94,91 @@ async function withBusy(buttons, message, task) {
   }
 }
 
-function showQuery(query) {
+/** Render a query result. hash: a section to scroll to (from a shared link such as ?q=2#sec-pgx). */
+function showQuery(query, { hash = "" } = {}) {
   state.query = query;
-  history.replaceState(null, "", `?q=${query.id}`);
+  state.entities = queryEntities(query);
+  state.focus = null;
+  const section = hash.startsWith("#sec-") ? document.querySelector(hash) : null;
+  history.replaceState(null, "", `?q=${query.id}${section ? hash : ""}`);
   $("results").classList.remove("hidden");
 
-  const status = query.evidence?.source_status || {};
-  $("source-status").replaceChildren(
-    el("span", { class: "muted small" }, `Query #${query.id}${query.parent_id ? ` (follow-up to #${query.parent_id})` : ""}:`),
-    ...Object.entries(SOURCE_NAMES).map(([key, name]) => {
-      const s = status[key] || { state: "skipped" };
-      const label = s.state === "ok" ? `${name} ✓ ${s.count}` : `${name} ${SOURCE_STATES[s.state] || s.state}`;
-      return el("span", { class: `source-pill ${s.state}`, title: s.error || s.version || "" }, label);
-    }));
-  renderNormalisation(query.evidence?.normalisation || []);
+  // The AI answer covers the whole query, so it isn't narrowed by the entity switcher.
+  const alerts = pgxAlerts(query.evidence?.items || []);
+  renderReports($("reports"), query, { alerts: () => renderAlerts(alerts) });
+  renderScoped();
 
-  renderReports($("reports"), query);
-  table.setRows(query.evidence?.table || []);
-  network.render(query.evidence?.network, Number($("edge-limit").value));
-  renderAvailability($("availability"), query.evidence?.australian_availability);
+  (section || $("results")).scrollIntoView({ behavior: scrollBehavior(), block: "start" });
 }
 
-/** Show how each input was interpreted, e.g. "P53 → TP53 (HGNC:11998, HGNC previous symbol)". */
-function renderNormalisation(entries) {
-  const box = $("normalisation");
-  const shown = entries.filter((e) => e.type === null || e.name !== e.input.trim().toUpperCase() || e.note);
-  box.classList.toggle("hidden", !shown.length);
-  box.replaceChildren(el("strong", {}, "Input interpreted as: "), ...shown.flatMap((e, i) => [
-    i ? " · " : "",
-    e.type
-      ? `${e.input} → ${e.name} (${[e.id, e.matched_by].filter(Boolean).join(", ")})`
-      : el("span", { class: "report-warning" }, `${e.input}: ${e.note}`),
-  ]));
+/** Everything below the AI card follows the entity switcher. */
+function renderScoped() {
+  const { query, entities, focus } = state;
+  const scoped = scopeEvidence(query, focus);
+  state.scoped = scoped;
+
+  const numbers = headlineNumbers(scoped, entities, focus);
+  renderHeader($("entity-header"), { query, entities, focus, numbers, onFocus: setFocus });
+  document.querySelectorAll("#section-nav [data-count]").forEach((span) => {
+    span.textContent = numbers.counts[span.dataset.count] ?? "";
+  });
+
+  table.setRows(interactionRows(scoped.table), {
+    items: new Map(scoped.items.map((i) => [i.id, i])),
+    availability: scoped.availability,
+  });
+  state.networkStale = true;
+  if (state.view === "network") renderNetwork();
+
+  const relations = query.relation_types || [];
+  renderPgx($("pgx"), scoped.items, { requested: !relations.length || relations.includes("snp") });
+  renderLiterature($("literature"), scoped.items);
+  renderAvailability($("availability"), scoped.availability);
+}
+
+function setFocus(entity) {
+  state.focus = entity;
+  renderScoped();
+}
+
+function renderNetwork() {
+  network.render(state.scoped?.network, Number($("edge-limit").value));
+  state.networkStale = false;
+}
+
+function setView(view) {
+  state.view = view;
+  document.querySelectorAll("#sec-interactions [data-view]").forEach((b) => {
+    b.classList.toggle("active", b.dataset.view === view);
+    b.setAttribute("aria-selected", String(b.dataset.view === view));
+  });
+  document.querySelectorAll("#sec-interactions [data-pane]").forEach((pane) => {
+    pane.classList.toggle("hidden", pane.dataset.pane !== view);
+  });
+  // Cytoscape can't lay out inside a hidden container, so the network is drawn when first shown.
+  if (view === "network" && state.networkStale) renderNetwork();
+}
+
+/** Scroll to the row behind a citation (table, network, PGx or literature) and highlight it. */
+function revealEvidence(eid, retried = false) {
+  const item = state.query?.evidence?.items?.find((i) => i.id === eid);
+  if (!item) return;
+  let target = null;
+  if (["interaction", "mechanism"].includes(item.kind)) {
+    if (state.view === "network" && network.focusEvidence(eid)) target = $("network");
+    else target = table.highlight(eid) || null;
+  } else {
+    target = document.querySelector(`#results .ev-row[data-eid="${CSS.escape(eid)}"]`);
+  }
+  if (!target && state.focus && !retried) {
+    setFocus(null); // narrowed away by the entity switcher
+    revealEvidence(eid, true);
+    return;
+  }
+  if (!target) return;
+  document.querySelectorAll("#results .highlight").forEach((n) => n.classList.remove("highlight"));
+  if (target !== $("network")) target.classList.add("highlight");
+  target.scrollIntoView({ behavior: scrollBehavior(), block: "center" });
 }
 
 $("search-form").addEventListener("submit", (event) => {
@@ -135,6 +201,14 @@ $("ask-form").addEventListener("submit", (event) => {
     () => api.ask(state.query.id, body));
 });
 
+// Example chips fill in the search box; the user still presses Explore (a query takes 20–60 s and calls the LLMs).
+document.querySelectorAll(".example").forEach((chip) => chip.addEventListener("click", () => {
+  $("entities").value = chip.dataset.entities;
+  $("entity-type").value = chip.dataset.type;
+  $("panel-info").textContent = "";
+  $("submit-btn").focus();
+}));
+
 $("panel-file").addEventListener("change", async (event) => {
   const [file] = event.target.files;
   if (!file) return;
@@ -154,13 +228,22 @@ $("panel-file").addEventListener("change", async (event) => {
 });
 
 $("edge-limit").addEventListener("change", () => {
-  if (state.query) network.render(state.query.evidence?.network, Number($("edge-limit").value));
+  if (state.query) renderNetwork();
 });
 $("network-fit").addEventListener("click", () => network.fit());
+document.querySelectorAll("#sec-interactions [data-view]").forEach((b) =>
+  b.addEventListener("click", () => setView(b.dataset.view)));
 
-document.addEventListener("evidence:focus", (event) => {
-  table.highlight(event.detail);
-  network.focusEvidence(event.detail);
-});
+document.addEventListener("evidence:focus", (event) => revealEvidence(event.detail));
+
+// Section nav: highlight the section currently in the middle of the screen.
+const navLinks = [...document.querySelectorAll("#section-nav a")];
+const spy = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    navLinks.forEach((a) => a.classList.toggle("active", a.getAttribute("href") === `#${entry.target.id}`));
+  }
+}, { rootMargin: "-35% 0px -60% 0px" });
+document.querySelectorAll("#results .section").forEach((section) => spy.observe(section));
 
 init();
