@@ -9,7 +9,9 @@ from app.reference.importers.cpic import build_pairs, build_recommendations
 from app.reference.importers.hgnc import parse_hgnc
 from app.reference.importers.pbs import build_items
 from app.reference.models import (
-    CpicPair, CpicRecommendation, Drug, DrugMechanism, DrugSynonym, Gene, GeneAlias, PbsItem, SourceRelease,
+    ClinpgxGuideline, ClinpgxGuidelinePair, CpicAllele, CpicAlleleFrequency, CpicDiplotype, CpicGeneResult,
+    CpicPair, CpicRecommendation, CpicTestAlert, Drug, DrugMechanism, DrugSynonym, Gene, GeneAlias, PbsItem,
+    SourceRelease,
 )
 from app.reference.normalise import resolve_entities
 from app.reference.text import strip_salt
@@ -179,3 +181,117 @@ def test_collect_evidence_without_reference_data(app, stub_live_sources):
     assert evidence["source_status"]["chembl"]["state"] == "disabled"
     assert evidence["source_status"]["pbs"]["state"] == "disabled"
     assert evidence["australian_availability"] is None  # frontend shows "not imported"
+
+# ---------- CPIC supporting tables, ClinPGx, DGIdb, FDA ----------
+
+FDA_PAGE = """<html><body><table><thead><tr><th>Drug</th><th>Therapeutic Area*</th><th>Biomarker &dagger;</th>
+<th>Labeling Sections</th></tr></thead><tbody>
+<tr><td>Clopidogrel</td><td>Cardiology</td><td>CYP2C19</td><td>Boxed Warning, Dosage and Administration</td></tr>
+<tr><td>Abemaciclib (2)</td><td>Oncology</td><td>ERBB2 (HER2)</td><td>Indications and Usage</td></tr>
+<tr><td>Imatinib (1)</td><td>Oncology</td><td>BCR-ABL1 (Philadelphia chromosome)</td><td>Indications and Usage</td></tr>
+<tr><td>Lenalidomide</td><td>Hematology</td><td>Chromosome 5q</td><td>Indications and Usage</td></tr>
+</tbody></table><p>Content current as of:</p><p><time>08/12/2026</time></p></body></html>"""
+
+
+def test_fda_biomarker_table(reference_data):
+    from app.reference.importers.fda import biomarker_genes, build_biomarkers, parse_table
+
+    rows, current_as_of = parse_table(FDA_PAGE)
+    assert current_as_of == "2026-08-12"
+    assert rows[1] == ["Abemaciclib (2)", "Oncology", "ERBB2 (HER2)", "Indications and Usage"]
+    genes = {"ERBB2": "HGNC:3430", "BCR": "HGNC:1014", "ABL1": "HGNC:76", "HLA-B": "HGNC:4932", "PGR": "HGNC:8910"}
+    assert biomarker_genes("BCR-ABL1 (Philadelphia chromosome)", genes) == ["BCR", "ABL1"]
+    assert biomarker_genes("HLA-B", genes) == ["HLA-B"]  # a hyphenated symbol is not split
+    assert biomarker_genes("ESR, PGR (Hormone Receptor)", genes) == ["PGR"]
+    assert biomarker_genes("Chromosome 5q", genes) == []
+
+    records = build_biomarkers(rows, {**gene_symbol_index(), **genes}, drug_synonym_index())
+    assert [(r["drug_name"], r["gene_symbol"]) for r in records] == [
+        ("Clopidogrel", "CYP2C19"), ("Abemaciclib", "ERBB2"), ("Imatinib", "BCR"), ("Imatinib", "ABL1"),
+        ("Lenalidomide", None)]
+    assert (records[0]["chembl_id"], records[0]["hgnc_id"]) == ("CHEMBL1771", "HGNC:2621")
+    assert records[0]["labeling_sections"] == ["Boxed Warning", "Dosage and Administration"]
+
+    with pytest.raises(ValueError):
+        parse_table("<table><tr><th>Something else</th></tr></table>")
+
+
+def test_dgidb_categories(reference_data):
+    from app.reference.importers.dgidb import _read_tsv, build_categories
+
+    gene_claims = _read_tsv("gene_claim_name\tnomenclature\tconcept_id\tgene_name\tsource_db_name\n"
+                            "P2Y12R\tsymbol\thgnc:18124\tP2RY12\tBaderLab\n")
+    categories = _read_tsv("name\tname-2\tsource_db_name\n"
+                           "P2Y12R\tG PROTEIN COUPLED RECEPTOR\tBaderLab\n"
+                           "P2Y12R\tG PROTEIN COUPLED RECEPTOR\tBaderLab\n"
+                           "UNKNOWN\tKINASE\tBaderLab\n")
+    assert build_categories(categories, gene_claims, gene_symbol_index()) == [
+        {"gene_symbol": "P2RY12", "hgnc_id": "HGNC:18124", "gene_claim_name": "P2Y12R",
+         "category": "G PROTEIN COUPLED RECEPTOR", "source_db": "BaderLab"}]
+
+
+def test_clinpgx_builders(reference_data):
+    from app.reference.importers.clinpgx import (
+        build_drug_labels, build_guidelines, build_relationships,
+    )
+
+    genes, drugs = gene_symbol_index(), drug_synonym_index()
+    relationships = build_relationships([
+        {"Entity1_id": "PA124", "Entity1_name": "CYP2C19", "Entity1_type": "Gene", "Entity2_id": "PA449053",
+         "Entity2_name": "clopidogrel", "Entity2_type": "Chemical", "Evidence": "ClinicalAnnotation,LabelAnnotation",
+         "Association": "associated", "PK": "PK", "PD": "", "PMIDs": "1;2"},
+        {"Entity1_id": "PA449053", "Entity1_name": "clopidogrel", "Entity1_type": "Chemical", "Entity2_id": "PA124",
+         "Entity2_name": "CYP2C19", "Entity2_type": "Gene"},  # reverse direction: dropped
+    ], genes, drugs)
+    assert len(relationships) == 1
+    assert (relationships[0]["evidence"], relationships[0]["pk"], relationships[0]["pmids"]) == (
+        ["ClinicalAnnotation", "LabelAnnotation"], True, [1, 2])
+
+    labels = build_drug_labels([{
+        "PharmGKB ID": "PA166104789", "Name": "Annotation of FDA Label for clopidogrel and CYP2C19", "Source": "FDA",
+        "Testing Level": "Actionable PGx", "Has Dosing Info": "", "Has Alternate Drug": "Alternate Drug",
+        "Chemicals": "clopidogrel", "Genes": "CYP2C19", "Latest History Date (YYYY-MM-DD)": "2026-01-02",
+    }], genes, drugs)
+    assert (labels[0]["has_alternate_drug"], labels[0]["has_dosing_info"], labels[0]["hgnc_id"]) == (
+        True, False, "HGNC:2621")
+
+    guidelines, pairs = build_guidelines([{"guideline": {
+        "id": "PA166104948", "name": "Annotation of DPWG Guideline for clopidogrel and CYP2C19", "source": "DPWG",
+        "recommendation": True, "summaryMarkdown": {"html": "<p>Avoid clopidogrel in <b>poor</b> metabolizers.</p>"},
+        "literature": [{"crossReferences": [{"resource": "PubMed", "resourceId": "35000000"}]}],
+        "relatedGenes": [{"symbol": "CYP2C19"}], "relatedChemicals": [{"name": "clopidogrel"}],
+    }}], genes, drugs)
+    assert guidelines[0]["summary"] == "Avoid clopidogrel in poor metabolizers."
+    assert guidelines[0]["pmids"] == [35000000]
+    assert pairs == [{"guideline_id": "PA166104948", "gene_symbol": "CYP2C19", "hgnc_id": "HGNC:2621",
+                      "drug_name": "clopidogrel", "drug_name_norm": "CLOPIDOGREL", "chembl_id": "CHEMBL1771"}]
+    replace_tables([(ClinpgxGuideline, guidelines), (ClinpgxGuidelinePair, pairs)])
+    assert ClinpgxGuidelinePair.query.one().guideline_id == "PA166104948"
+
+
+def test_cpic_supporting_tables(reference_data):
+    from app.reference.importers.cpic import (
+        build_alleles, build_diplotypes, build_frequencies, build_gene_results, build_test_alerts,
+    )
+
+    alleles = build_alleles([{"id": 1, "genesymbol": "CYP2C19", "name": "*2", "functionalstatus": "No function",
+                              "activityvalue": "n/a", "strength": "Definitve", "citations": ["123", "x"]}])
+    assert (alleles[0]["activity_value"], alleles[0]["strength"], alleles[0]["pmids"]) == (None, "Definitive", [123])
+    diplotypes = build_diplotypes([{"genesymbol": "CYP2C19", "diplotype": "*2/*2", "function1": "No function",
+                                    "function2": "No function", "generesult": "Poor Metabolizer",
+                                    "lookupkey": {"CYP2C19": "Poor Metabolizer"}}])
+    gene_results = build_gene_results([{"id": 5, "genesymbol": "CYP2C19", "result": "Poor Metabolizer",
+                                        "activityscore": "n/a", "consultationtext": "Two no function alleles.",
+                                        "frequency": {"European": 0.024}}])
+    frequencies = build_frequencies([{"genesymbol": "CYP2C19", "name": "*2", "population_group": "European",
+                                      "subjectcount": 1000, "freq_weighted_avg": 0.15},
+                                     {"genesymbol": "CYP2C19", "name": "*2", "population_group": None}])
+    alerts = build_test_alerts([{"id": 9, "population": "general", "cdscontext": "Post-test", "genes": ["CYP2C19"],
+                                 "drugid": "RxNorm:32968", "lookupkey": {"CYP2C19": "Poor Metabolizer"},
+                                 "alerttext": ["Avoid clopidogrel."], "drug": {"name": "clopidogrel"}}])
+    replace_tables([(CpicAllele, alleles), (CpicAlleleFrequency, frequencies), (CpicGeneResult, gene_results),
+                    (CpicDiplotype, diplotypes), (CpicTestAlert, alerts)])
+    db.session.commit()
+    assert CpicDiplotype.query.one().phenotype == "Poor Metabolizer"
+    assert CpicAlleleFrequency.query.count() == 1  # rows without a population group are dropped
+    assert CpicTestAlert.query.one().drug_name_norm == "CLOPIDOGREL"

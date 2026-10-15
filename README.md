@@ -1,7 +1,7 @@
 # Pharmagenix — a GenAI-powered drug–gene interaction explorer
 
 Enter a gene or drug (or upload a gene panel), pick the relationship types you care about, and the app combines
-curated reference datasets held in MySQL (HGNC, ChEMBL, CPIC and the Australian PBS Schedule) with live evidence from
+curated reference datasets held in MySQL (HGNC, ChEMBL, CPIC, ClinPGx, DGIdb, the FDA biomarker table and the Australian PBS Schedule) with live evidence from
 DGIdb, PharmGKB (ClinPGx), PubTator3 and DrugBank. An LLM then writes a narrative report in which every claim
 cites its evidence. Results are shown three ways (a text summary, a structured DGI table and a relationship network), plus the
 drugs' Australian PBS listing status.
@@ -34,7 +34,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env          # fill in DATABASE_URL (with the password above), API keys, ADMIN_TOKEN
 flask --app run init-db       # create tables and seed the default prompt template
-flask --app run import-data   # load HGNC, ChEMBL, CPIC and PBS (about 3 minutes; see below)
+flask --app run import-data   # load HGNC, ChEMBL, CPIC, ClinPGx, DGIdb, FDA and PBS (about 4 minutes; see below)
 flask --app run run --debug --host 127.0.0.1 --port 5001  # http://127.0.0.1:5001
 ```
 
@@ -59,17 +59,31 @@ local source carries that version.
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------- |
 | [HGNC](https://www.genenames.org/download/) | Normalising gene input: symbols, previous symbols, aliases, Ensembl and NCBI Gene IDs (`P53 → TP53`)                                                             | Full complete-set TSV                                                                   | ~45k genes, ~106k names                           | CC0                                                                     |
 | [ChEMBL](https://www.ebi.ac.uk/chembl/)     | Curated mechanisms of action with action types (inhibitor, agonist…), which most DGIdb interactions lack; drug synonyms and trade names (`Plavix → CLOPIDOGREL`) | Mechanism table plus drug names (including salt forms' trade names), via the ChEMBL API | ~5.6k drugs, ~58k names, ~12k mechanism–gene rows | CC BY-SA 3.0 (attribution required)                                     |
-| [CPIC](https://cpicpgx.org/)                | Genotype/phenotype-based prescribing recommendations for the SNP-specific relationship type                                                                      | Pairs and recommendations, via the CPIC API                                             | ~630 pairs, ~2.1k recommendations                 | See cpicpgx.org                                                         |
+| [CPIC](https://cpicpgx.org/)                | Genotype/phenotype-based prescribing recommendations for the SNP-specific relationship type; the supporting guideline tables (allele functions and frequencies, diplotype → phenotype mappings, example CDS consultation text, pre-/post-test alerts) for checking reports against the guidelines | Pairs, recommendations and the [cpic-data](https://github.com/cpicpgx/cpic-data) tables, via the CPIC API (cpic-data releases no longer attach database dumps) | ~570 pairs, ~2.1k recommendations, ~1.4k alleles, ~7.2k allele frequencies, ~113k diplotypes, ~2.2k alerts | See cpicpgx.org |
+| [ClinPGx](https://www.clinpgx.org/downloads) (PharmGKB) | Guideline annotations from CPIC, DPWG, CPNDS, RNPGx and others; PGx drug-label annotations (FDA, EMA, PMDA, HCSC, Swissmedic); gene–chemical relationships. Clinical annotations stay live (ClinPGx API) | `relationships` (gene–chemical rows only), `drugLabels` and `guidelineAnnotations.json` downloads | 219 guidelines (~480 gene–drug pairs), ~2.2k label rows, ~10k relationships | CC BY-NC-SA 4.0 (attribution, non-commercial) |
+| [DGIdb](https://dgidb.org/downloads)        | Druggable-genome gene categories (kinase, clinically actionable…) for gene-level filtering. Interactions stay live (DGIdb API) | `categories.tsv`, mapped to normalised genes through `genes.tsv` | ~32k gene categories | Per contributing source; see dgidb.org |
+| [FDA PGx biomarker table](https://www.fda.gov/drugs/science-and-research-drugs/table-pharmacogenomic-biomarkers-drug-labeling) | Which FDA labels name a pharmacogenomic biomarker, the therapeutic area and the label sections | Parsed from the HTML page (no download file exists); biomarkers mapped to HGNC symbols where they name them | ~690 table rows, ~750 gene rows | Public domain (US government) |
 | [PBS Schedule](https://www.pbs.gov.au/)     | Whether a drug is PBS-listed in Australia, its item codes, forms and benefit type (shown separately; not DGI evidence and not sent to the LLM)                   | Current month's schedule, via the PBS public API                                        | ~15k item/brand rows                              | © Commonwealth of Australia; redistribution permitted, modification not |
 
 ```bash
-flask --app run import-data                 # all four, in dependency order (HGNC → ChEMBL → CPIC → PBS)
+flask --app run import-data                 # all, in dependency order (HGNC → ChEMBL → CPIC → ClinPGx → DGIdb → FDA → PBS)
 flask --app run import-data pbs             # just one; PBS updates on the 1st of each month
 flask --app run reference-status            # what is loaded, and which versions
 ```
 
 The app works without the reference data (sources show as "not enabled" and input is passed to the APIs unchanged),
 but results are noticeably better with it.
+
+**Live or local.** Evidence that is looked up per gene or drug and needs no joins is queried live on every search,
+so it is always current: DGIdb interactions and ClinPGx clinical annotations. Data that is needed for name
+normalisation, has no usable API, or is joined across sources (gene → guideline → label → PBS; diplotype →
+phenotype → recommendation → alert) is kept locally and versioned: HGNC, ChEMBL, CPIC, the ClinPGx guidelines and
+labels, the FDA table and PBS. The new tables (CPIC's supporting tables, ClinPGx, DGIdb categories, FDA) are not read
+by the evidence stage yet; they are there for the guideline-check step. DGIdb's `latest` download is the June 2024
+release.
+
+If you imported an earlier version of this branch, drop the tables that are now queried live:
+`DROP TABLE dgidb_interactions, clinpgx_clinical_annotations, clinpgx_annotation_alleles;`
 
 Datasets considered but not imported yet:
 
@@ -131,7 +145,7 @@ backend/
     reference/                local datasets
       models.py               genes, gene_aliases, drugs, drug_synonyms, drug_mechanisms, cpic_*, pbs_items,
                               source_releases
-      importers/              hgnc.py, chembl.py, cpic.py, pbs.py (one per source)
+      importers/              hgnc, chembl, cpic, clinpgx, dgidb, fda, pbs (one module per source)
       normalise.py            input → standard gene / drug identifiers
       lookup.py               local evidence queries
       text.py                 name normalisation (case, whitespace, salt forms)

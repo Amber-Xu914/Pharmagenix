@@ -22,7 +22,7 @@ def register_cli(app):
     @app.cli.command("import-data")
     @click.argument("sources", nargs=-1, type=click.Choice(IMPORT_ORDER + ["all"]))
     def import_data(sources):
-        """Import reference datasets into the database: hgnc, chembl, cpic, pbs or all (default)."""
+        """Import reference datasets: hgnc, chembl, cpic, clinpgx, dgidb, fda, pbs or all (default)."""
         selected = IMPORT_ORDER if not sources or "all" in sources else [s for s in IMPORT_ORDER if s in sources]
         for source in selected:
             run_import(source, echo=click.echo)

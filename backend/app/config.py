@@ -51,6 +51,11 @@ class Config:
         "HGNC_URL", "https://storage.googleapis.com/public-download-files/hgnc/tsv/tsv/hgnc_complete_set.txt")
     CHEMBL_API_URL = os.getenv("CHEMBL_API_URL", "https://www.ebi.ac.uk/chembl/api/data")
     CPIC_API_URL = os.getenv("CPIC_API_URL", "https://api.cpicpgx.org/v1")
+    CLINPGX_DOWNLOAD_URL = os.getenv("CLINPGX_DOWNLOAD_URL", "https://api.clinpgx.org/v1/download/file/data")
+    DGIDB_DOWNLOAD_URL = os.getenv("DGIDB_DOWNLOAD_URL", "https://dgidb.org/data/latest")
+    FDA_BIOMARKERS_URL = os.getenv(
+        "FDA_BIOMARKERS_URL",
+        "https://www.fda.gov/drugs/science-and-research-drugs/table-pharmacogenomic-biomarkers-drug-labeling")
     PBS_API_URL = os.getenv("PBS_API_URL", "https://data-api.health.gov.au/pbs/api/v3")
     # Published key for unregistered public users; shared rate limit of 1 request per 20 seconds.
     PBS_SUBSCRIPTION_KEY = os.getenv("PBS_SUBSCRIPTION_KEY") or "2384af7c667342ceb5a736fe29f1dc6b"
