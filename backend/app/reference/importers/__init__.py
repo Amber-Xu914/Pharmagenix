@@ -10,7 +10,7 @@ from ...extensions import db
 from ..models import DrugSynonym, GeneAlias, SourceRelease
 from ..text import norm, strip_salt
 
-IMPORT_ORDER = ["hgnc", "chembl", "cpic", "pbs"]  # later sources map names onto earlier ones
+IMPORT_ORDER = ["hgnc", "chembl", "cpic", "clinpgx", "dgidb", "fda", "pbs"]  # later sources map names onto earlier ones
 BATCH_SIZE = 2000
 
 
@@ -32,9 +32,10 @@ def replace_tables(tables):
 
 
 def run_import(source, echo=print):
-    from . import chembl, cpic, hgnc, pbs
+    from . import chembl, clinpgx, cpic, dgidb, fda, hgnc, pbs
 
-    importer = {"hgnc": hgnc, "chembl": chembl, "cpic": cpic, "pbs": pbs}[source]
+    importer = {"hgnc": hgnc, "chembl": chembl, "cpic": cpic, "clinpgx": clinpgx, "dgidb": dgidb, "fda": fda,
+                "pbs": pbs}[source]
     started = time.perf_counter()
     try:
         result = importer.run(echo)
