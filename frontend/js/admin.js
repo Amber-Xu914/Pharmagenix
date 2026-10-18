@@ -216,7 +216,7 @@ async function loadStats() {
     stat("Total feedback", s.feedback),
     ...s.models.map((m) => stat(m.model, m.avg_rating ?? "–",
       `Average rating · ${m.reports} reports · ${m.failed} failed · ${m.flagged} flagged · ${m.avg_latency_ms ?? "–"} ms average`)),
-    ...["hgnc", "chembl", "cpic", "clinpgx", "dgidb", "fda", "pbs"].map((source) => {
+    ...["hgnc", "chembl", "cpic", "clinpgx", "dgidb", "fda", "oncotree", "intogen", "civic", "hotspots", "cbioportal", "pbs"].map((source) => {
       const r = s.reference_data[source];
       return stat(`Reference data: ${source.toUpperCase()}`, r ? "Loaded" : "Not imported",
         r ? `${r.version} · imported ${formatDate(r.imported_at)}` : "Run: flask --app run import-data");

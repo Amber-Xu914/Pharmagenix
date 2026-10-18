@@ -49,16 +49,17 @@ def admin_headers():
 @pytest.fixture
 def fake_sources(monkeypatch):
     """Replace external APIs and LLMs. Returns a dict so tests can change the LLM answers."""
-    from app.services.biomed.aggregator import build_network, build_table
+    from app.services.biomed.aggregator import build_network
+    from app.services.workflow.evidence import consolidate_pairs
 
     answers = {"openai": "CYP2C19 metabolises clopidogrel [E1]. *2 reduces response [E2].",
                "anthropic": "Summary citing [E1, E2]."}
     calls = {"collect": 0}
 
-    def fake_collect(entities, entity_type, relation_types):
+    def fake_collect(gene, relation_types, resolved=None):
         calls["collect"] += 1
         items = [dict(i) for i in FAKE_EVIDENCE_ITEMS]
-        return {"items": items, "table": build_table(items), "network": build_network(items, entities),
+        return {"items": items, "table": consolidate_pairs(items), "network": build_network(items, [gene]),
                 "source_status": {"dgidb": {"state": "ok", "count": 1}}, "counts": {}}
 
     monkeypatch.setattr("app.services.explorer.collect_evidence", fake_collect)

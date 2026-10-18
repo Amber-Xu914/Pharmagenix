@@ -18,16 +18,17 @@ def _resolve(raw, entity_type):
     key = norm(raw)
     want_gene = entity_type in ("gene", "auto")
     want_drug = entity_type in ("drug", "auto")
-    notes = []
+    notes, candidates = [], []  # candidates: approved symbols an ambiguous alias could mean
 
     # Most specific matches first: identifiers and approved symbols, then drug names, then aliases.
     steps = []
     if want_gene:
-        steps += [lambda: _gene_by_identifier(key), lambda: _gene_by_alias(key, "symbol", notes)]
+        steps += [lambda: _gene_by_identifier(key), lambda: _gene_by_alias(key, "symbol", notes, candidates)]
     if want_drug:
         steps += [lambda: _drug_by_name(key, "ChEMBL synonym")]
     if want_gene:
-        steps += [lambda: _gene_by_alias(key, "previous", notes), lambda: _gene_by_alias(key, "alias", notes)]
+        steps += [lambda: _gene_by_alias(key, "previous", notes, candidates),
+                  lambda: _gene_by_alias(key, "alias", notes, candidates)]
     if want_drug:
         steps += [lambda: _drug_by_name(strip_salt(key), "parent drug of salt form"), lambda: _drug_by_pbs_brand(key)]
 
@@ -36,7 +37,8 @@ def _resolve(raw, entity_type):
         if match:
             return {"input": raw, **match, "note": "; ".join(notes) or None}
     return {"input": raw, "name": key, "type": None, "id": None, "matched_by": None,
-            "note": "; ".join(notes) or "not found in local reference data"}
+            "note": "; ".join(notes) or "not found in local reference data",
+            "candidates": list(dict.fromkeys(candidates))}
 
 
 def _gene(gene, matched_by):
@@ -55,13 +57,14 @@ def _gene_by_identifier(key):
     return _gene(gene, label) if gene else None
 
 
-def _gene_by_alias(key, alias_type, notes):
+def _gene_by_alias(key, alias_type, notes, candidates):
     hgnc_ids = db.session.scalars(
         db.select(GeneAlias.hgnc_id).where(GeneAlias.alias_norm == key, GeneAlias.alias_type == alias_type).distinct()
     ).all()
     if len(hgnc_ids) > 1:
         symbols = db.session.scalars(db.select(Gene.symbol).where(Gene.hgnc_id.in_(hgnc_ids))).all()
         notes.append(f"ambiguous {GENE_ALIAS_LABELS[alias_type]}: {', '.join(sorted(symbols))}")
+        candidates.extend(sorted(symbols))
         return None
     if hgnc_ids:
         return _gene(db.session.get(Gene, hgnc_ids[0]), GENE_ALIAS_LABELS[alias_type])

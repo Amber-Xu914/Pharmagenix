@@ -11,17 +11,18 @@ async function request(method, path, { body, form, headers = {} } = {}) {
   }
   const resp = await fetch(API_BASE + path, options);
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+  if (!resp.ok) {
+    // The body travels with the error, e.g. the suggestions when an entity needs confirming (HTTP 422).
+    throw Object.assign(new Error(data.error || `HTTP ${resp.status}`), { status: resp.status, data });
+  }
   return data;
 }
 
 export const api = {
   meta: () => request("GET", "/api/meta"),
-  parsePanel(file) {
-    const form = new FormData();
-    form.append("file", file);
-    return request("POST", "/api/panels/parse", { form });
-  },
+  vcfOptions: () => request("GET", "/api/vcf/options"),
+  vcfExplore: (form) => request("POST", "/api/vcf/explore", { form }),
+  vcfExploreExample: (body) => request("POST", "/api/vcf/explore", { body }),
   explore: (body) => request("POST", "/api/explore", { body }),
   getQuery: (id) => request("GET", `/api/queries/${id}`),
   ask: (id, body) => request("POST", `/api/queries/${id}/ask`, { body }),

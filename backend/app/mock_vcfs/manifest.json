@@ -1,0 +1,98 @@
+[
+  {
+    "id": "mock_luad_egfr_l858r_t790m",
+    "file": "mock_luad_egfr_l858r_t790m.vcf",
+    "cancer_type": "LUAD",
+    "label": "EGFR L858R + T790M (resistance to 1st-gen TKIs), with QC artefacts",
+    "variants": [
+      "EGFR L858R",
+      "EGFR T790M",
+      "TP53 R273H",
+      "STK11 Q37*",
+      "KRAS G12D",
+      "BRAF V600E",
+      "KRAS G12C",
+      "TP53 P72R (common SNP)",
+      "EGFR Q787= (common SNP)",
+      "EGFR intronic",
+      "LRP1B L1334P"
+    ]
+  },
+  {
+    "id": "mock_luad_egfr_t790m_c797s",
+    "file": "mock_luad_egfr_t790m_c797s.vcf",
+    "cancer_type": "LUAD",
+    "label": "EGFR L858R + T790M + C797S (osimertinib resistance)",
+    "variants": [
+      "EGFR L858R",
+      "EGFR T790M",
+      "EGFR C797S",
+      "TP53 R273H"
+    ]
+  },
+  {
+    "id": "mock_luad_egfr_exon19del",
+    "file": "mock_luad_egfr_exon19del.vcf",
+    "cancer_type": "LUAD",
+    "label": "EGFR exon 19 deletion + TP53 / CDKN2A co-mutations",
+    "variants": [
+      "EGFR E746_A750del",
+      "TP53 R175H",
+      "CDKN2A R80*"
+    ]
+  },
+  {
+    "id": "mock_luad_kras_g12c",
+    "file": "mock_luad_kras_g12c.vcf",
+    "cancer_type": "LUAD",
+    "label": "KRAS G12C + STK11 / KEAP1 co-mutations",
+    "variants": [
+      "KRAS G12C",
+      "STK11 Q37*",
+      "KEAP1 G333C"
+    ]
+  },
+  {
+    "id": "mock_luad_braf_v600e",
+    "file": "mock_luad_braf_v600e.vcf",
+    "cancer_type": "LUAD",
+    "label": "BRAF V600E + TP53",
+    "variants": [
+      "BRAF V600E",
+      "TP53 R248Q"
+    ]
+  },
+  {
+    "id": "mock_lusc_no_targeted",
+    "file": "mock_lusc_no_targeted.vcf",
+    "cancer_type": "LUSC",
+    "label": "Squamous: PIK3CA / NFE2L2 / TP53, no approved targeted therapy",
+    "variants": [
+      "TP53 R248Q",
+      "PIK3CA E545K",
+      "NFE2L2 R34G",
+      "CDKN2A R80*"
+    ]
+  },
+  {
+    "id": "mock_sclc_tp53_rb1",
+    "file": "mock_sclc_tp53_rb1.vcf",
+    "cancer_type": "SCLC",
+    "label": "Small cell: TP53 + RB1, no approved targeted therapy",
+    "variants": [
+      "TP53 R273H",
+      "RB1 R320*"
+    ]
+  },
+  {
+    "id": "mock_luad_tier3_only",
+    "file": "mock_luad_tier3_only.vcf",
+    "cancer_type": "LUAD",
+    "label": "No Tier 1\u20132 variant: only exploratory Tier 3 candidates",
+    "variants": [
+      "KEAP1 R413L",
+      "LRP1B L1334P",
+      "TP53 P72R (common SNP)"
+    ]
+  }
+]

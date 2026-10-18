@@ -1,3 +1,6 @@
+from app.services.prompts import DEFAULT_TEMPLATE_VERSION
+
+
 def test_admin_requires_token(client):
     assert client.get("/api/admin/prompt-logs").status_code == 401
     assert client.get("/api/admin/prompt-logs", headers={"X-Admin-Token": "wrong"}).status_code == 401
@@ -5,7 +8,7 @@ def test_admin_requires_token(client):
 
 def test_prompt_logs_and_failures(client, fake_sources, admin_headers):
     fake_sources["answers"]["openai"] = "No citations at all."
-    client.post("/api/explore", json={"entities": ["BRAF"]})
+    client.post("/api/explore", json={"gene": "BRAF"})
 
     logs = client.get("/api/admin/prompt-logs", headers=admin_headers).get_json()
     assert logs["total"] == 1
@@ -21,13 +24,15 @@ def test_prompt_logs_and_failures(client, fake_sources, admin_headers):
 
 
 def test_template_versioning_and_preview(client, fake_sources, admin_headers):
-    query_id = client.post("/api/explore", json={"entities": ["BRAF"]}).get_json()["id"]
+    query_id = client.post("/api/explore", json={"gene": "BRAF"}).get_json()["id"]
     body = {"name": "dgi_report", "system_prompt": "Be brief.", "user_template": "Genes: {{ entities|join(',') }}"}
 
     created = client.post("/api/admin/templates", json=body | {"activate": True}, headers=admin_headers).get_json()
-    assert created["version"] == 2 and created["is_active"]
+    assert created["version"] == DEFAULT_TEMPLATE_VERSION + 1 and created["is_active"]
     templates = client.get("/api/admin/templates", headers=admin_headers).get_json()
-    assert [t["is_active"] for t in templates] == [True, False]
+    # activation is per workflow: the new gene template replaces the old one, the VCF template stays active
+    assert [(t["name"], t["is_active"]) for t in templates] == [
+        ("dgi_report", True), ("dgi_report", False), ("vcf_report", True)]
 
     bad = client.post("/api/admin/templates", json=body | {"user_template": "{% if %}"}, headers=admin_headers)
     assert bad.status_code == 400
@@ -39,7 +44,7 @@ def test_template_versioning_and_preview(client, fake_sources, admin_headers):
 
 
 def test_stats(client, fake_sources, admin_headers):
-    client.post("/api/explore", json={"entities": ["BRAF"], "compare": True})
+    client.post("/api/explore", json={"gene": "BRAF", "compare": True})
     stats = client.get("/api/admin/stats", headers=admin_headers).get_json()
     assert stats["queries"] == 1
     assert {m["provider"] for m in stats["models"]} == {"openai", "anthropic"}

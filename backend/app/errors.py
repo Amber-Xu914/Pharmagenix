@@ -3,16 +3,17 @@ from werkzeug.exceptions import HTTPException
 
 
 class APIError(Exception):
-    def __init__(self, message, status=400):
+    def __init__(self, message, status=400, payload=None):
         super().__init__(message)
         self.message = message
         self.status = status
+        self.payload = payload or {}  # extra JSON fields, e.g. suggestions for unresolved input
 
 
 def register_error_handlers(app):
     @app.errorhandler(APIError)
     def handle_api_error(err):
-        return jsonify(error=err.message), err.status
+        return jsonify(error=err.message, **err.payload), err.status
 
     @app.errorhandler(HTTPException)
     def handle_http_error(err):

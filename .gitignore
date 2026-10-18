@@ -5,3 +5,6 @@ __pycache__/
 .env
 .pytest_cache/
 instance/
+mlflow.db
+mlruns/
+mlartifacts/

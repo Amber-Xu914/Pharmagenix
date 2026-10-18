@@ -2,6 +2,7 @@
 
 import time
 
+from ...reference.text import strip_salt
 from .base import BaseAPIClient
 
 # Level of evidence ordering: 1A strongest, 4 weakest.
@@ -13,7 +14,8 @@ class PharmGKBClient(BaseAPIClient):
     name = "PharmGKB"
     min_interval = 0.5  # API asks for <= 2 requests/second
 
-    def clinical_annotations(self, genes=(), drugs=(), limit=40, max_lookups=10):
+    def clinical_annotations(self, genes=(), drugs=(), limit=40, max_lookups=10, pairs=()):
+        """pairs: (gene, drug) the user asked about; their annotations are ranked first so the limit keeps them."""
         # Gene symbols are upper case; chemical names only match in lower case.
         lookups = ([("location.genes.symbol", g.upper()) for g in genes]
                    + [("relatedChemicals.name", d.lower()) for d in drugs])
@@ -28,7 +30,12 @@ class PharmGKBClient(BaseAPIClient):
                     continue
                 seen.add(ann.get("id"))
                 out.append(self._normalize(ann))
-        out.sort(key=lambda a: LEVEL_ORDER.get(a["level"], 99))
+        wanted = {(gene.upper(), strip_salt(drug)) for gene, drug in pairs}
+
+        def about_pair(ann):
+            return any((g.upper(), strip_salt(d)) in wanted for g in ann["genes"] for d in ann["drugs"])
+
+        out.sort(key=lambda a: (not about_pair(a), LEVEL_ORDER.get(a["level"], 99)))
         return out[:limit]
 
     @staticmethod

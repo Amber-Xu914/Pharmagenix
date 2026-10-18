@@ -1,7 +1,7 @@
-from app.services.biomed.aggregator import build_evidence_items, build_network, build_table
+from app.services.biomed.aggregator import build_evidence_items, build_network
 from app.services.llm.report_generator import extract_citations
-from app.services.panel import parse_gene_panel
 from app.services.relations import categorize, matches
+from app.services.workflow.evidence import consolidate_pairs
 
 
 def test_categorize_maps_dgidb_labels():
@@ -15,17 +15,6 @@ def test_matches_relation_filter():
     assert matches(["inhibit"], ["inhibit", "bind"])
     assert not matches(["other"], ["inhibit"])
     assert matches(["other"], [])  # empty selection = everything
-
-
-def test_parse_gene_panel_handles_csv_header_and_junk():
-    table = "gene_symbol,notes\nBRAF,oncogene\nbraf,dup\nCYP2D6,\n123bad,x\n"
-    result = parse_gene_panel(table, max_genes=10)
-    assert result["genes"] == ["BRAF", "CYP2D6"]  # only the gene column is read
-    assert result["ignored"] == ["123bad"]
-
-    plain = "Gene\nBRAF, EGFR\nTP53\tCYP2C19\n"
-    assert parse_gene_panel(plain, max_genes=10)["genes"] == ["BRAF", "EGFR", "TP53", "CYP2C19"]
-    assert parse_gene_panel("A B C", max_genes=2)["truncated"] is True
 
 
 def test_extract_citations_flags_unknown_ids():
@@ -45,8 +34,11 @@ def test_evidence_table_and_network():
     assert [i["id"] for i in items] == ["E1", "E2", "E3"]
     assert items[0]["score"] == 3.142
 
-    rows = build_table(items)
-    assert [r["category"] for r in rows] == ["inhibit", "snp"]  # publications aren't table rows
+    rows = consolidate_pairs(items)
+    assert [(r["gene"], r["drug"]) for r in rows] == [("BRAF", "VEMURAFENIB")]  # DGIdb + PharmGKB merged
+    assert rows[0]["categories"] == ["inhibit", "snp"]  # publications aren't table rows
+    assert rows[0]["evidence_ids"] == ["E1", "E2"]
+    assert (rows[0]["grade"], rows[0]["pgkb_level"]) == ("strong", "1A")
 
     net = build_network(items, ["BRAF"])
     node_ids = {n["data"]["id"] for n in net["nodes"]}

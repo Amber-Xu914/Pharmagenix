@@ -12,11 +12,13 @@ const PROVIDER_NAMES = { openai: "OpenAI", anthropic: "Claude" };
  * The AI answer card: the report's Overview first, the rest folded away, with the rule-based alerts, cited
  * evidence and rating underneath. With a comparison report, a switch flips between the two models.
  */
-export function renderReports(container, query, { alerts = () => null } = {}) {
+export function renderReports(container, query, {
+  alerts = () => null, roles = ["primary", "comparison"], title = "AI summary", tabLabel = null, empty = null,
+} = {}) {
   const evidence = new Map((query.evidence?.items || []).map((item) => [item.id, item]));
-  // Admin retries append new reports, so show the latest one per role.
+  // Admin retries append new reports, so show the latest one per role (only the roles this card shows).
   const latest = new Map();
-  for (const report of query.reports) latest.set(report.role, report);
+  for (const report of query.reports.filter((r) => roles.includes(r.role))) latest.set(report.role, report);
   const reports = [...latest.values()];
 
   const panels = reports.map((report, i) => {
@@ -35,13 +37,16 @@ export function renderReports(container, query, { alerts = () => null } = {}) {
           b.setAttribute("aria-selected", String(b === event.currentTarget));
         });
       },
-    }, PROVIDER_NAMES[report.provider] || report.provider)));
+    }, tabLabel ? tabLabel(report) : PROVIDER_NAMES[report.provider] || report.provider)));
 
   container.replaceChildren(
     el("div", { class: "ai-head" },
-      el("h2", {}, el("span", { class: "ai-spark", "aria-hidden": "true" }, "✦"), " AI summary"),
+      el("h2", {}, el("span", { class: "ai-spark", "aria-hidden": "true" }, "✦"), ` ${title}`),
       tabs || ""),
-    ...(panels.length ? panels : [el("p", { class: "muted" }, "No report was generated.")]),
+    ...(panels.length ? panels : [el("p", { class: "muted" }, empty || (["none", "tier3_only"].includes(query.evidence?.outcome?.status)
+      ? `Not generated: no ${query.entity_type === "vcf" ? "variant passed QC and tiering" : "known interaction was found"}, so the AI `
+        + "makes no claims. The sources checked are listed above."
+      : "No report was generated."))]),
   );
 }
 

@@ -23,8 +23,8 @@ class Query(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     parent_id = db.Column(db.Integer, db.ForeignKey("queries.id"), nullable=True, index=True)
-    entities = db.Column(db.JSON, nullable=False)
-    entity_type = db.Column(db.String(16), nullable=False, default="auto")  # auto | gene | drug
+    entities = db.Column(db.JSON, nullable=False)  # [gene]; older queries may hold several names
+    entity_type = db.Column(db.String(16), nullable=False, default="gene")  # gene (older queries: auto | drug)
     relation_types = db.Column(db.JSON, nullable=False)
     followup_question = db.Column(db.Text)
     # Normalised evidence bundle: {items, table, network, source_status, counts}

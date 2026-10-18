@@ -3,12 +3,14 @@ import { CATEGORY_LABELS, categoryColor, cssVar, el, focusEvidence } from "./uti
 const NODE_COLORS = { gene: "#2563eb", drug: "#f08c00", variant: "#8e44ad" };
 const NODE_LABELS = { gene: "Gene", drug: "Drug", variant: "Variant" };
 const EDGE_CATEGORIES = ["inhibit", "induce", "bind", "metabolize", "other", "snp", "variant_of"];
+const LINE_STYLES = { snp: "dashed", variant_of: "dotted", resistant: "dashed", gene_link: "dotted" };
 // Arrow drawn at the gene end: drug ⊣ gene (inhibit), drug → gene (induce), drug ● gene (bind)
-const ARROWS = { inhibit: "tee", induce: "triangle", bind: "circle", metabolize: "square" };
+const ARROWS = { inhibit: "tee", induce: "triangle", bind: "circle", metabolize: "square", resistant: "tee" };
 
 export class NetworkView {
-  constructor({ container, info, legend }) {
-    Object.assign(this, { container, info, legend });
+  /** categories: the edge categories this view draws (the VCF workflow uses response / resistance edges). */
+  constructor({ container, info, legend, categories = EDGE_CATEGORIES }) {
+    Object.assign(this, { container, info, legend, categories });
     this.cy = null;
     this.renderLegend();
   }
@@ -17,7 +19,7 @@ export class NetworkView {
     this.legend.replaceChildren(
       ...Object.entries(NODE_COLORS).map(([type, color]) =>
         el("span", {}, el("span", { class: "shape", style: `background:${color};border-radius:${type === "drug" ? "50%" : "3px"}` }), NODE_LABELS[type])),
-      ...EDGE_CATEGORIES.map((cat) =>
+      ...this.categories.map((cat) =>
         el("span", {}, el("span", { class: "line", style: `background:${categoryColor(cat)}` }), CATEGORY_LABELS[cat])),
     );
   }
@@ -60,13 +62,13 @@ export class NetworkView {
       })),
       { selector: "node[?is_query]", style: { width: 36, height: 36, "border-width": 3, "border-color": text, "font-size": 13, "font-weight": 700 } },
       { selector: "edge", style: { width: 2, "curve-style": "bezier", opacity: 0.8, "arrow-scale": 1.1 } },
-      ...EDGE_CATEGORIES.map((cat) => ({
+      ...this.categories.map((cat) => ({
         selector: `edge[category = "${cat}"]`,
         style: {
           "line-color": categoryColor(cat),
           "source-arrow-color": categoryColor(cat),
           "source-arrow-shape": ARROWS[cat] || "none",
-          "line-style": cat === "snp" ? "dashed" : cat === "variant_of" ? "dotted" : "solid",
+          "line-style": LINE_STYLES[cat] || "solid",
         },
       })),
       { selector: ".faded", style: { opacity: 0.12 } },

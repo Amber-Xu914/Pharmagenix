@@ -1,84 +1,35 @@
 /**
- * The results page around the AI answer: entity header (identity, links, headline numbers), rule-based
+ * The results page around the AI answer: gene header (identity, links, headline numbers), rule-based
  * pharmacogenomic alerts, and the Pharmacogenomics and Literature sections.
  *
  * Everything here is computed from the evidence bundle, never from the LLM output.
  */
 import { el, focusEvidence, formatDate } from "./util.js";
+import { SOURCE_NAMES } from "./workflow.js";
 
-const TYPE_ICONS = { gene: "🧬", drug: "💊" };
-const TYPE_LABELS = { gene: "Gene", drug: "Drug" };
 const PGKB_LEVEL_ORDER = { "1A": 0, "1B": 1, "2A": 2, "2B": 3, "3": 4, "4": 5 };
 const CPIC_LEVEL_ORDER = { A: 0, "A/B": 1, B: 2, "B/C": 3, C: 4, "C/D": 5, D: 6 };
-const SOURCE_NAMES = {
-  dgidb: "DGIdb", chembl: "ChEMBL", cpic: "CPIC", pharmgkb: "PharmGKB",
-  pubtator: "PubTator", drugbank: "DrugBank", pbs: "PBS",
-};
+// The profile source only appears when it ran.
+const OPTIONAL_SOURCES = new Set(["uniprot"]);
 const SOURCE_STATES = { ok: "✓", error: "✗ failed", skipped: "not requested", disabled: "not enabled" };
 
 const upper = (value) => (value || "").toString().toUpperCase();
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-// ---------- Entities and scoping ----------
+// ---------- The searched gene ----------
 
-/** The searched entities: how each input was resolved, plus header details looked up by the backend. */
-export function queryEntities(query) {
-  const normalisation = query.evidence?.normalisation || [];
-  if (!normalisation.length) {
-    return query.entities.map((name) => ({ input: name, name: upper(name), type: null, details: null }));
-  }
-  const details = query.entity_details || [];
-  return normalisation.map((entry, i) => ({ ...entry, details: details[i] || null }));
-}
-
-/** Evidence restricted to one entity (or everything when focus is null). */
-export function scopeEvidence(query, focus) {
-  const evidence = query.evidence || {};
-  const items = evidence.items || [];
-  const table = evidence.table || [];
-  const availability = evidence.australian_availability;
-  if (!focus) return { items, table, availability, network: evidence.network };
-
-  const name = focus.name;
-  const listHas = (list) => (Array.isArray(list) ? list : String(list || "").split(/\s*,\s*/))
-    .some((v) => upper(v) === name);
-  const matches = (item) => {
-    switch (item.kind) {
-      case "variant_annotation": return listHas(item.genes) || listHas(item.drugs);
-      case "publication": return upper(item.query).split(/\s+AND\s+/).includes(name);
-      default: return upper(item.gene) === name || upper(item.drug) === name;
-    }
-  };
-  const scopedItems = items.filter(matches);
-  const ids = new Set(scopedItems.map((i) => i.id));
-  const scopedTable = table.filter((r) => ids.has(r.evidence_id));
-  const drugs = new Set([name, ...scopedTable.map((r) => upper(r.drug))]);
-  return {
-    items: scopedItems,
-    table: scopedTable,
-    availability: availability && availability.filter((a) => drugs.has(upper(a.drug))),
-    network: scopeNetwork(evidence.network, name),
-  };
-}
-
-/** The focused node, its neighbours, and the variant edges hanging off those neighbours. */
-function scopeNetwork(network, name) {
-  if (!network) return network;
-  const focusIds = new Set(network.nodes.filter((n) => upper(n.data.label) === name).map((n) => n.data.id));
-  const touches = (e, set) => set.has(e.data.source) || set.has(e.data.target);
-  const direct = network.edges.filter((e) => touches(e, focusIds));
-  const neighbours = new Set(direct.flatMap((e) => [e.data.source, e.data.target]));
-  const variants = new Set(network.nodes.filter((n) => n.data.type === "variant" && neighbours.has(n.data.id))
-    .map((n) => n.data.id));
-  const edges = network.edges.filter((e) => touches(e, focusIds) || touches(e, variants));
-  const used = new Set(edges.flatMap((e) => [e.data.source, e.data.target]));
-  return { nodes: network.nodes.filter((n) => used.has(n.data.id) || focusIds.has(n.data.id)), edges };
+/** The searched gene: how the input was resolved, plus header details looked up by the backend. */
+export function queryGene(query) {
+  const entry = query.evidence?.normalisation?.[0];
+  if (!entry) return { input: query.entities[0], name: upper(query.entities[0]), type: null, details: null };
+  return { ...entry, details: query.entity_details?.[0] || null };
 }
 
 // ---------- Headline numbers ----------
 
+/** Graded pair rows include pharmacogenomic-only pairs; rows saved before grading listed those under PGx only. */
 export function interactionRows(table) {
-  return table.filter((r) => r.category !== "snp");
+  return table.filter((r) => r.evidence_ids || r.category !== "snp");
 }
 
 function bestBy(values, order) {
@@ -86,17 +37,18 @@ function bestBy(values, order) {
 }
 
 /** Numbers shown in the header and the section nav. Each links to the section that lists them. */
-export function headlineNumbers(scoped, entities, focus) {
-  const rows = interactionRows(scoped.table);
-  const drugQuery = focus ? focus.type === "drug" : entities.every((e) => e.type === "drug");
-  const partnerKey = drugQuery ? "gene" : "drug";
-  const partners = new Set(rows.map((r) => upper(r[partnerKey])).filter(Boolean));
-  for (const e of focus ? [focus] : entities) partners.delete(e.name); // count partners, not the searched entities
-  const typed = rows.filter((r) => r.category !== "other").length;
-  const guidelines = scoped.items.filter((i) => i.kind === "guideline");
-  const annotations = scoped.items.filter((i) => i.kind === "variant_annotation");
-  const papers = scoped.items.filter((i) => i.kind === "publication");
-  const listed = (scoped.availability || []).filter((a) => a.pbs_listed).length;
+export function headlineNumbers(evidence) {
+  const rows = interactionRows(evidence.table || []);
+  const items = evidence.items || [];
+  const availability = evidence.australian_availability;
+  const drugs = new Set(rows.map((r) => upper(r.drug)).filter(Boolean));
+  const graded = rows.every((r) => r.evidence_ids); // rows saved before stage 5 grading have no evidence_ids
+  const supported = graded ? rows.filter((r) => ["strong", "moderate"].includes(r.grade)).length
+    : rows.filter((r) => r.category !== "other").length;
+  const guidelines = items.filter((i) => i.kind === "guideline");
+  const annotations = items.filter((i) => i.kind === "variant_annotation");
+  const papers = items.filter((i) => i.kind === "publication");
+  const listed = (availability || []).filter((a) => a.pbs_listed).length;
   const bestCpic = bestBy(guidelines.map((g) => g.cpic_level), CPIC_LEVEL_ORDER);
   const bestPgkb = bestBy(annotations.map((a) => a.level), PGKB_LEVEL_ORDER);
 
@@ -105,16 +57,18 @@ export function headlineNumbers(scoped, entities, focus) {
       interactions: rows.length,
       pgx: guidelines.length + annotations.length,
       literature: papers.length,
-      pbs: scoped.availability ? listed : null,
+      pbs: availability ? listed : null,
     },
     tiles: [
-      { value: partners.size, label: drugQuery ? "Genes" : "Drugs", sub: `${rows.length} interactions`, href: "#sec-interactions" },
-      { value: typed, label: "Known action", sub: "inhibit, induce, bind…", href: "#sec-interactions" },
+      { value: drugs.size, label: "Drugs", sub: `${rows.length} interactions`, href: "#sec-interactions" },
+      graded
+        ? { value: supported, label: "Well supported", sub: "strong or moderate evidence", href: "#sec-interactions" }
+        : { value: supported, label: "Known action", sub: "inhibit, induce, bind…", href: "#sec-interactions" },
       { value: guidelines.length, label: "CPIC guidelines", sub: bestCpic ? `best level ${bestCpic}` : "none", href: "#sec-pgx" },
       { value: annotations.length, label: "PGx annotations", sub: bestPgkb ? `top level ${bestPgkb}` : "PharmGKB", href: "#sec-pgx" },
       { value: papers.length, label: "Papers", sub: "PubTator", href: "#sec-literature" },
-      scoped.availability
-        ? { value: listed, label: "PBS-listed drugs", sub: `of ${scoped.availability.length} checked`, href: "#sec-pbs" }
+      availability
+        ? { value: listed, label: "PBS-listed drugs", sub: `of ${availability.length} checked`, href: "#sec-pbs" }
         : { value: "–", label: "PBS-listed drugs", sub: "not imported", href: "#sec-pbs" },
     ],
   };
@@ -157,7 +111,7 @@ function evidenceLink(label, eid) {
   return el("a", { href: "#", onclick: (e) => { e.preventDefault(); focusEvidence(eid); } }, label);
 }
 
-// ---------- Entity header ----------
+// ---------- Gene header ----------
 
 function geneLinks(name, d) {
   return [
@@ -169,103 +123,55 @@ function geneLinks(name, d) {
   ].filter(Boolean);
 }
 
-function drugLinks(name, d) {
-  return [
-    d?.chembl_id && ["ChEMBL", `https://www.ebi.ac.uk/chembl/compound_report_card/${d.chembl_id}/`],
-    d?.chembl_id && ["Open Targets", `https://platform.opentargets.org/drug/${d.chembl_id}`],
-    ["PBS", `https://www.pbs.gov.au/pbs/search?term=${encodeURIComponent(name.toLowerCase())}`],
-  ].filter(Boolean);
+function describeGene(gene) {
+  const d = gene.details;
+  if (gene.type !== "gene") return { fullName: null, meta: [], links: [] }; // the note explains why
+  const locus = d?.locus_type === "gene with protein product" ? "Protein-coding gene" : d?.locus_type;
+  return {
+    fullName: d?.full_name,
+    meta: [d?.location && `Chr ${d.location}`, locus, gene.id, d?.ensembl_gene_id,
+           d?.uniprot_ids?.length && `UniProt ${d.uniprot_ids.join(", ")}`],
+    links: geneLinks(gene.name, d),
+  };
 }
 
-function describeEntity(entity) {
-  const d = entity.details;
-  if (entity.type === "gene") {
-    const locus = d?.locus_type === "gene with protein product" ? "Protein-coding gene" : d?.locus_type;
-    return {
-      fullName: d?.full_name,
-      meta: [d?.location && `Chr ${d.location}`, locus, entity.id, d?.ensembl_gene_id,
-             d?.uniprot_ids?.length && `UniProt ${d.uniprot_ids.join(", ")}`],
-      links: geneLinks(entity.name, d),
-    };
-  }
-  if (entity.type === "drug") {
-    const phase = d?.max_phase == null ? null : d.max_phase >= 4 ? "Approved" : `Max phase ${d.max_phase}`;
-    return {
-      fullName: d?.molecule_type,
-      meta: [phase, d?.first_approval && `first approved ${d.first_approval}`, entity.id],
-      links: drugLinks(entity.name, d),
-    };
-  }
-  return { fullName: null, meta: [], links: [] }; // the interpretation note explains why it is unresolved
-}
-
-/** How inputs were interpreted when that isn't obvious (P53 → TP53, Plavix → CLOPIDOGREL), and lookup warnings. */
-function interpretationNote(entities) {
-  const shown = entities.filter((e) => !e.type || e.name !== upper(e.input).trim() || e.note);
-  if (!shown.length) return null;
-  return el("p", { class: "eh-note small" }, "Input interpreted as: ", shown.map((e, i) => [
-    i ? " · " : "",
-    e.type
-      ? [`${e.input} → ${e.name}`, e.matched_by ? ` (${e.matched_by})` : "",
-         e.note ? el("span", { class: "report-warning" }, `; ${e.note}`) : ""]
-      : el("span", { class: "report-warning" }, `${e.input}: ${e.note || "not found in local reference data"}`),
-  ]));
+/** How the input was interpreted when that isn't obvious (P53 → TP53), and lookup warnings. */
+function interpretationNote(gene) {
+  if (gene.type && gene.name === upper(gene.input).trim() && !gene.note) return null;
+  return el("p", { class: "eh-note small" }, "Input interpreted as: ", gene.type
+    ? [`${gene.input} → ${gene.name}`, gene.matched_by ? ` (${gene.matched_by})` : "",
+       gene.note ? el("span", { class: "report-warning" }, `; ${gene.note}`) : ""]
+    : el("span", { class: "report-warning" }, `${gene.input}: ${gene.note || "not found in local reference data"}`));
 }
 
 function sourcePills(status) {
   return el("div", { class: "source-status" },
     el("span", { class: "muted small" }, "Sources:"),
-    Object.entries(SOURCE_NAMES).map(([key, name]) => {
-      const s = status[key] || { state: "skipped" };
-      const label = s.state === "ok" ? `${name} ✓ ${s.count}` : `${name} ${SOURCE_STATES[s.state] || s.state}`;
-      return el("span", { class: `source-pill ${s.state}`, title: s.error || s.version || "" }, label);
-    }));
+    Object.entries(SOURCE_NAMES)
+      .filter(([key]) => !OPTIONAL_SOURCES.has(key) || ["ok", "error"].includes(status[key]?.state))
+      .map(([key, name]) => {
+        const s = status[key] || { state: "skipped" };
+        const label = s.state === "ok" ? `${name} ✓ ${s.count}` : `${name} ${SOURCE_STATES[s.state] || s.state}`;
+        return el("span", { class: `source-pill ${s.state}`, title: s.error || s.version || "" }, label);
+      }));
 }
 
-export function renderHeader(container, { query, entities, focus, numbers, onFocus }) {
-  const multiple = entities.length > 1;
-  const switcher = multiple && el("div", { class: "entity-switch", role: "tablist", "aria-label": "Show results for" },
-    el("button", { type: "button", role: "tab", class: focus ? "" : "active", "aria-selected": String(!focus),
-                   onclick: () => onFocus(null) }, `All (${entities.length})`),
-    entities.map((e) => el("button", {
-      type: "button", role: "tab", class: focus?.name === e.name ? "active" : "",
-      "aria-selected": String(focus?.name === e.name), onclick: () => onFocus(e),
-    }, `${TYPE_ICONS[e.type] || "❔"} ${e.name}`)));
-
-  let title, typeBadge, typeClass = "", fullName, meta, links;
-  if (focus || !multiple) {
-    const entity = focus || entities[0];
-    ({ fullName, meta, links } = describeEntity(entity));
-    title = entity.name;
-    typeBadge = TYPE_LABELS[entity.type] || "Unresolved";
-    typeClass = entity.type || "";
-  } else {
-    const genes = entities.filter((e) => e.type === "gene").length;
-    const drugs = entities.filter((e) => e.type === "drug").length;
-    const names = entities.map((e) => e.name);
-    title = names.length > 4 ? `${names.slice(0, 4).join(" · ")} +${names.length - 4} more` : names.join(" · ");
-    typeBadge = genes && !drugs ? "Gene panel" : "Multiple entities";
-    fullName = [genes && plural(genes, "gene"), drugs && plural(drugs, "drug"),
-                entities.length - genes - drugs && `${entities.length - genes - drugs} unresolved`]
-      .filter(Boolean).join(", ") + ". Pick one above to focus every section on it.";
-    meta = [];
-    links = [];
-  }
-
+export function renderHeader(container, { query, gene, numbers }) {
+  const { fullName, meta, links } = describeGene(gene);
   // replaceChildren() would print a null as the text "null", so optional parts are filtered out.
   container.replaceChildren(...[
     el("div", { class: "eh-top" },
-      switcher || el("span"),
+      el("span"),
       el("span", { class: "muted small" },
         `Query #${query.id}${query.parent_id ? ` (follow-up to #${query.parent_id})` : ""} · ${formatDate(query.created_at)}`)),
     el("div", { class: "eh-title" },
-      el("h2", {}, title),
-      el("span", { class: `type-badge ${typeClass}` }, typeBadge),
+      el("h2", {}, gene.name),
+      el("span", { class: `type-badge ${gene.type || ""}` }, gene.type ? "Gene" : "Unresolved"),
       links.length ? el("div", { class: "eh-links" }, links.map(([label, href]) =>
         el("a", { href, target: "_blank", rel: "noopener" }, `${label} ↗`))) : null),
     fullName ? el("p", { class: "eh-name" }, fullName) : null,
     meta.filter(Boolean).length ? el("p", { class: "eh-meta small" }, meta.filter(Boolean).join(" · ")) : null,
-    interpretationNote(focus ? [focus] : entities),
+    interpretationNote(gene),
     el("div", { class: "kpis" }, numbers.tiles.map((t) => el("a", { class: "kpi", href: t.href },
       el("span", { class: "kpi-value" }, t.value),
       el("span", { class: "kpi-label" }, t.label),

@@ -9,7 +9,8 @@ from ..extensions import db
 from ..models import Feedback, PromptLog, PromptTemplate, Query, Report
 from ..reference.lookup import latest_releases
 from ..services.llm.report_generator import generate_reports
-from ..services.prompts import render_prompt
+from ..services.prompts import activate_template as activate_in_workflow, render_prompt
+from ..services.variants.agents import AGENT_ROLES, build_prompts as agent_prompts
 
 bp = Blueprint("admin", __name__)
 
@@ -105,9 +106,7 @@ def preview_template():
 
 
 def _activate(template):
-    PromptTemplate.query.update({PromptTemplate.is_active: False})
-    template.is_active = True
-    db.session.commit()
+    activate_in_workflow(template)
 
 
 def _check_renders(system_prompt, user_template):
@@ -143,7 +142,10 @@ def retry_report(report_id):
     report = db.get_or_404(Report, report_id)
     if not report.query.evidence:
         raise APIError("The query has no stored evidence to regenerate from")
-    [new_report] = generate_reports(report.query, [(report.provider, report.role)])
+    if report.role in AGENT_ROLES:  # a Workflow 4 exploration agent: rebuilt from its own prompt
+        [new_report] = generate_reports(report.query, [], extra_prompts=agent_prompts(report.query, [report.role]))
+    else:
+        [new_report] = generate_reports(report.query, [(report.provider, report.role)])
     return jsonify(new_report.to_dict()), 201
 
 

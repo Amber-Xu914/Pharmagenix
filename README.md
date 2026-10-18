@@ -1,8 +1,10 @@
 # Pharmagenix — a GenAI-powered drug–gene interaction explorer
 
-Enter a gene or drug (or upload a gene panel), pick the relationship types you care about, and the app combines
+Enter one gene, pick the relationship types you care about, and the app lists every drug that interacts with it. Or
+upload a tumour's somatic variants (VCF, synthetic test data) with its cancer type to get ranked candidate drugs for its
+actionable variants (Workflow 4, lung cancer prototype). It combines
 curated reference datasets held in MySQL (HGNC, ChEMBL, CPIC, ClinPGx, DGIdb, the FDA biomarker table and the Australian PBS Schedule) with live evidence from
-DGIdb, PharmGKB (ClinPGx), PubTator3 and DrugBank. An LLM then writes a narrative report in which every claim
+DGIdb, PharmGKB (ClinPGx), PubTator3, UniProt and DrugBank. An LLM then writes a narrative report in which every claim
 cites its evidence. Results are shown three ways (a text summary, a structured DGI table and a relationship network), plus the
 drugs' Australian PBS listing status.
 Users can rate answers, leave suggestions and ask follow-up questions, and can create an account and log in with
@@ -34,7 +36,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env          # fill in DATABASE_URL (with the password above), API keys, ADMIN_TOKEN
 flask --app run init-db       # create tables and seed the default prompt template
-flask --app run import-data   # load HGNC, ChEMBL, CPIC, ClinPGx, DGIdb, FDA and PBS (about 4 minutes; see below)
+flask --app run import-data   # load all reference datasets (about 4 minutes; see below)
 flask --app run run --debug --host 127.0.0.1 --port 5001  # http://127.0.0.1:5001
 ```
 
@@ -63,10 +65,15 @@ local source carries that version.
 | [ClinPGx](https://www.clinpgx.org/downloads) (PharmGKB) | Guideline annotations from CPIC, DPWG, CPNDS, RNPGx and others; PGx drug-label annotations (FDA, EMA, PMDA, HCSC, Swissmedic); gene–chemical relationships. Clinical annotations stay live (ClinPGx API) | `relationships` (gene–chemical rows only), `drugLabels` and `guidelineAnnotations.json` downloads | 219 guidelines (~480 gene–drug pairs), ~2.2k label rows, ~10k relationships | CC BY-NC-SA 4.0 (attribution, non-commercial) |
 | [DGIdb](https://dgidb.org/downloads)        | Druggable-genome gene categories (kinase, clinically actionable…) for gene-level filtering. Interactions stay live (DGIdb API) | `categories.tsv`, mapped to normalised genes through `genes.tsv` | ~32k gene categories | Per contributing source; see dgidb.org |
 | [FDA PGx biomarker table](https://www.fda.gov/drugs/science-and-research-drugs/table-pharmacogenomic-biomarkers-drug-labeling) | Which FDA labels name a pharmacogenomic biomarker, the therapeutic area and the label sections | Parsed from the HTML page (no download file exists); biomarkers mapped to HGNC symbols where they name them | ~690 table rows, ~750 gene rows | Public domain (US government) |
+| [OncoTree](https://oncotree.info/) | Workflow 4: the standard term for the cancer type / subtype (LUAD → NSCLC → LUNG) | Latest stable tumour types, via the OncoTree API | ~900 types | See oncotree.info |
+| [IntOGen](https://www.intogen.org/download) | Workflow 4: driver genes per cancer type, for the "cancer relevance" filter (replaces COSMIC CGC, which needs a licence) | Compendium of cancer genes (2024-06-18 release) | ~4.5k gene–cohort rows, 633 genes | CC0 |
+| [CIViC](https://civicdb.org/) | Workflow 4: variant-level drug response / resistance evidence, levels A–E; molecular profiles parsed into matchable parts | Nightly predictive evidence summaries | ~2.8k evidence items | CC0 |
+| [cancerhotspots.org](https://www.cancerhotspots.org/) | Workflow 4: Tier 2 known hotspots (replaces COSMIC hotspots, which need a licence) | Single-residue and in-frame indel hotspots, via its API | 1,165 hotspots in 247 genes | See cancerhotspots.org (Chang et al. 2018) |
+| [cBioPortal](https://www.cbioportal.org/) | Workflow 4: gene mutation frequency per lung subtype (Tier 3 R component) | Mutated-gene counts for one reference study per subtype (`CBIOPORTAL_SUBTYPE_STUDIES`) | ~63k gene–subtype rows (LUAD, LUSC, NSCLC, SCLC) | TCGA / study licences; see cbioportal.org |
 | [PBS Schedule](https://www.pbs.gov.au/)     | Whether a drug is PBS-listed in Australia, its item codes, forms and benefit type (shown separately; not DGI evidence and not sent to the LLM)                   | Current month's schedule, via the PBS public API                                        | ~15k item/brand rows                              | © Commonwealth of Australia; redistribution permitted, modification not |
 
 ```bash
-flask --app run import-data                 # all, in dependency order (HGNC → ChEMBL → CPIC → ClinPGx → DGIdb → FDA → PBS)
+flask --app run import-data                 # all, in dependency order (HGNC → ChEMBL → CPIC → ClinPGx → DGIdb → FDA → OncoTree → IntOGen → CIViC → hotspots → cBioPortal → PBS)
 flask --app run import-data pbs             # just one; PBS updates on the 1st of each month
 flask --app run reference-status            # what is loaded, and which versions
 ```
@@ -94,37 +101,155 @@ Datasets considered but not imported yet:
 - **Open Targets, CIViC**: CIViC is already one of DGIdb's sources. Open Targets fits a later target–disease view.
 - **TGA ARTG**: would answer "can this be supplied in Australia" beyond PBS subsidy.
 
-## Data flow
+## Workflow
+
+There are two workflows, picked with the switch on the search card: **gene → drug–gene interaction list** (below)
+and **patient VCF + cancer type → candidate drugs** (Workflow 4, next section). Each runs six stages, and the
+stage-by-stage trace is shown under the results header.
 
 ```
-User input ──► POST /api/explore
+Gene name ──► POST /api/explore {gene}                              services/explorer.py runs the stages in order
                 │
-                ├─ reference/normalise.py       P53 → TP53 (HGNC), Plavix → CLOPIDOGREL (ChEMBL, PBS brands)
-                │
-                ├─ services/biomed/aggregator.py   sources are called in turn, each in its own try/except,
-                │                                  so one failing source doesn't sink the query
+  1 Resolution  ├─ reference/normalise.py + workflow/resolution.py
+                │    P53 → TP53, ENSG… / NCBI Gene ID → symbol (HGNC); one gene per search
+                │    unknown or ambiguous name ⇒ HTTP 422 with the closest gene symbols; nothing else runs until the
+                │    user picks one or chooses "search as typed" (only when HGNC data is imported)
+  2 Profile     ├─ workflow/profiles.py     HGNC + UniProt (function, domains, location)
+  3 Retrieval   ├─ services/biomed/aggregator.py   each source in its own try/except
                 │    ├─ DGIdb (GraphQL)       drug–gene interactions, types, scores, PMIDs
                 │    ├─ ChEMBL (local)        curated mechanisms of action with action types
                 │    ├─ CPIC (local)          prescribing recommendations (only when SNP is selected)
-                │    ├─ PharmGKB/ClinPGx      variant (SNP/haplotype)–drug clinical annotations, evidence
-                │    │                        levels 1A–4 (only requested when SNP is selected)
+                │    ├─ PharmGKB/ClinPGx      variant–drug clinical annotations, levels 1A–4 (only when SNP is selected)
                 │    ├─ DrugBank              mechanism of action (needs a licensed key; skipped otherwise)
-                │    ├─ PubTator3             related literature
-                │    └─ PBS (local)           Australian listing for the query drugs and related approved drugs
-                │    ⇒ evidence = { normalisation, items (E1..En), table, network, australian_availability,
-                │                   source_status }, stored in queries.evidence
-                │
-                ├─ services/llm/report_generator.py
-                │    ├─ renders the prompt from the active template (sandboxed Jinja2), evidence numbered
-                │    ├─ calls the primary and comparison models in parallel
-                │    ├─ checks citations: unknown IDs / no citations / truncated output → status=flagged
-                │    └─ writes a prompt_logs row for every call, failures included
-                ▼
-             returns query + reports + evidence → frontend renders summary / table / network / PBS panel
+                │    ├─ PubTator3             related literature for the strongest pairs
+                │    └─ PBS (local)           Australian listing (context only, not DGI evidence)
+  4 Evidence    ├─ workflow/evidence.py     one row per gene–drug pair: merged, standardised relation types,
+                │    evidence IDs + PMIDs, a grade and conflict flags; then "interactions found?"
+                │      Strong      CPIC A, A/B, B · PharmGKB 1A/1B
+                │      Moderate    PharmGKB 2A/2B · curated ChEMBL mechanism · DGIdb with 3+ databases and PMIDs
+                │      Supportive  weaker CPIC / PharmGKB levels · DGIdb with 2 databases or PMIDs
+                │      Limited     a single database record without literature
+                │    nothing found ⇒ no LLM call; the page lists the sources checked
+  5 Analysis    ├─ services/llm/report_generator.py
+                │    the graded pairs are in the prompt, each listing only the evidence IDs the prompt contains;
+                │    citation check: unknown IDs / no citations / truncated output → status=flagged
+  6 Report      ▼
+             frontend: trace · AI summary · gene profile · graded table / network · PGx · literature · PBS
 ```
 
-The table and the network are built straight from the API data, never by the LLM, so the model cannot invent entries
-there. The LLM only writes the narrative, and every sentence must cite an evidence ID like `[E3]`.
+The table, network, profile and grades are built from the source data by fixed rules, never by the LLM.
+The LLM only writes the narrative, and every sentence must cite an evidence ID like `[E3]`.
+
+After pulling this version, run `flask --app run init-db` once: it adds the gene-workflow prompt template (v3) and
+activates it unless an admin-edited template is active. Older templates still work; the report sections are
+appended to them.
+
+## Workflow 4: patient VCF + cancer type → candidate drugs
+
+A prototype for **lung cancer only**, with **synthetic test data only**: the form offers eight mock VCFs
+(`backend/app/mock_vcfs/`, made by `backend/scripts/make_mock_vcfs.py`), and uploads must be confirmed as test data.
+It is a hybrid design: deterministic tools do QC, tiering, evidence classification and ranking; LLM agents only
+explore the exploratory track and explain.
+
+```
+VCF + cancer type ──► POST /api/vcf/explore                    services/vcf_explorer.py → variants/pipeline.py
+                │
+  1 VCF QC tool ├─ configurable (VCF_QC_*): FILTER = PASS, DP ≥ 20, ALT reads ≥ 5, VAF ≥ 5 %; germline: gnomAD AF
+                │    > 1 % or present in the matched normal; annotation (file's VEP / ANNOVAR, plus Ensembl VEP REST
+                │    for gnomAD, AlphaMissense, REVEL, CADD); protein-altering only. Failures go to an audit table.
+  2 Resolution  ├─ HGNC / Entrez / UniProt, HGVS (EGFR p.L858R), OncoTree (LUAD)
+  3 Tiering tool├─ Tier 1  CIViC A/B (OncoKB 1/2/R1) in this OncoTree subtype. A truncating variant in a tumour
+                │          suppressor (IntOGen LoF) also matches gene-level evidence such as "STK11 Mutation" as a
+                │          class; a missense never tiers through gene-level evidence
+                │  Tier 2  cancerhotspots.org hotspot (oncogenes), a truncating mutation in a tumour suppressor
+                │          driver of the subtype (TSGs: likely oncogenic as a class), or variant-level evidence in
+                │          other cancer types
+                │  Tier 3  S = 0.4·F + 0.3·R + 0.3·B (weights in VCF_TIER3_WEIGHTS), each component 0–1:
+                │            F functional impact (AlphaMissense > REVEL > CADD; 0.9 for truncating)
+                │            R subtype relevance (cBioPortal frequency in the subtype; 25 % counts as 1)
+                │            B biological evidence (IntOGen cancer role 0.4, core oncogenic pathway 0.3, TSG loss 0.3)
+                │    S below VCF_TIER3_MIN_SCORE -> "low priority" (kept and reported). No top-N cut here.
+  4 Retrieval   ├─ every tiered variant: CIViC / OncoKB (variant level), DGIdb and ChEMBL (gene level)
+  5 Evidence    ├─ merge, link drug -> variant -> sources, check co-occurring variants (L858R + T790M,
+    classif.    │    T790M + C797S), flag resistance / conflicts, drop unsupported claims; two tracks:
+                │      established  CIViC A/B (OncoKB 1/2) in this subtype for a Tier 1 variant, variant-specific
+                │                   (exact / codon / exon); class-level drug evidence stays exploratory
+                │      exploratory  levels C–E, other cancer types, DGIdb / ChEMBL-only links, all Tier 3 variants
+  6 Agents (LLM)├─ exploratory track only; cannot change QC, tiers or levels (services/variants/agents.py):
+                │      Literature (PubTator search for Tier 3 variants and level C–E pairs) · Biological
+                │      interpretation (pathways, co-mutations such as STK11 + KRAS, TP53 + RB1) · Hypothesis
+                │    every statement cites an evidence ID or is labelled "Hypothesis"; a check flags violations
+  7 Analysis    ├─ each track ranked separately by rules: established by level, subtype match, specificity,
+                │    resistance (−60, down-ranked); exploratory by evidence × Tier 3 S + literature support.
+                │    Top VCF_TOP_PER_TRACK drugs in the report, the full lists in the appendix. "No approved
+                │    targeted therapy" when the established track has nothing without resistance. The Analysis
+                │    agent (template vcf_report v3) explains both tracks; it runs in parallel with the agents.
+  8 Report      ▼  A. established clinical evidence · B. exploratory predictions (scores, Tier 3 F/R/B/S, agent
+                   output) · co-mutations without a targeted drug · network · appendix (all tiered, low-priority
+                   and QC-filtered variants with reasons) · limitations · disclaimer
+```
+
+OncoKB is optional: set `ONCOKB_API_TOKEN` (free for academic use). COSMIC hotspots and the Cancer Gene Census need
+a licence, so cancerhotspots.org and IntOGen gene roles are used instead. R counts every mutation, so large passenger
+genes (TTN, MUC16) score high on R; B is there to offset this. SNVs / indels can't show fusions or copy-number
+changes (ALK, ROS1, RET, MET amplification), which the report lists as a limitation.
+
+## MLflow tracking (optional)
+
+Set `MLFLOW_TRACKING_URI` (e.g. `sqlite:///mlflow.db` in `backend/.env`) and every search, in both workflows, is
+logged by `app/tracking.py`:
+
+- **A run** in the experiment `pharmagenix-gene` or `pharmagenix-vcf`: parameters (gene / sample, cancer type, QC
+  thresholds, Tier 3 weights, template version, models), metrics (counts per stage, tiers, drugs per track, seconds
+  per stage, LLM latency / tokens / citation checks per report role) and artifacts (`evidence.json` and every report).
+  User ratings are added later as `user_rating_<role>` metrics.
+- **A trace** of the same search: a span per workflow stage and per data source, and every OpenAI / Anthropic call
+  (MLflow autolog), including the Analysis agent and the three exploration agents. Ratings are attached to the
+  trace as assessments.
+
+```bash
+cd backend && .venv/bin/flask --app run mlflow-ui      # then open http://127.0.0.1:5050
+```
+
+It uses the project's own MLflow (a bare `mlflow` command is usually not on the PATH) and the same database as the
+app; if the UI is already running it just prints the address. Runs are under Experiments → `pharmagenix-vcf` /
+`pharmagenix-gene`; each run's Traces tab shows the stages and LLM calls.
+
+Without `MLFLOW_TRACKING_URI` nothing is logged, and MLflow errors never fail a search.
+
+### Evaluating Workflow 4
+
+`app/evaluation.py` runs Workflow 4 on the eight mock VCFs and scores each result against an expected answer taken
+from published evidence (CIViC, FDA labels, NSCLC guidelines), not from the pipeline's own output:
+
+```bash
+cd backend && .venv/bin/flask --app run mlflow-eval                  # deterministic stages only: ~1 min, no LLM cost
+cd backend && .venv/bin/flask --app run mlflow-eval --llm            # full workflow, incl. reports and agents
+cd backend && .venv/bin/flask --app run mlflow-eval --case mock_luad_kras_g12c   # one case (repeatable)
+```
+
+| Check | Passes when |
+|---|---|
+| `tiers_correct` | every expected variant is in its expected tier |
+| `qc_filter_correct` | the QC artefacts are removed and the somatic variants kept |
+| `expected_drugs_established` | the guideline drugs are on the established track, not down-ranked |
+| `resistance_down_ranked` | drugs the sample is resistant to (e.g. gefitinib with T790M) are down-ranked |
+| `established_not_contaminated` | the established track holds only drugs backed by a Tier 1–2 variant, none forbidden |
+| `no_therapy_flag_correct` | "no approved targeted therapy" is shown exactly when expected |
+| `report_citations_valid` (`--llm`) | the analysis report cites evidence, and only IDs it was given |
+| `agent_statements_grounded` (`--llm`) | every exploration-agent statement cites evidence or is a hypothesis |
+
+In the MLflow UI, experiment `pharmagenix-vcf`:
+
+- **Datasets**: `pharmagenix-vcf-cases`, the inputs and expected answers.
+- **Evaluation runs**: one row per case and one column per check. A failing row links to its trace and shows the
+  check's reason.
+- **Judges**: the checks, if `MLFLOW_SERVER_ENABLE_CUSTOM_SCORERS=true` is set in `backend/.env`. MLflow only
+  stores code-based checks with this flag, because a stored check is code it runs later. Set it only for a
+  tracking store you trust, such as the local `mlflow.db`, and restart the MLflow UI afterwards. The checks are
+  scored with or without it.
+
+To add a case, put a VCF in `app/mock_vcfs/` and its expected answer in `CASES` in `app/evaluation.py`.
 
 ## Project layout
 
@@ -136,42 +261,61 @@ backend/
     __init__.py               create_app: registers blueprints, serves the frontend static files
     config.py                 all settings (read from .env)
     models.py                 queries / reports / prompt_logs / prompt_templates / feedback / users
-    cli.py                    flask init-db / import-data / reference-status / dump-schema
+    cli.py                    flask init-db / import-data / reference-status / mlflow-ui / mlflow-eval / dump-schema
+    tracking.py               MLflow runs, traces and feedback (optional)
+    evaluation.py             MLflow evaluation of Workflow 4 on the mock VCFs
     routes/
-      explore.py              /api/meta, /api/explore, /api/queries/<id>[/ask], /api/panels/parse
+      explore.py              /api/meta, /api/explore, /api/queries/<id>[/ask]
+      vcf.py                  /api/vcf/options, /api/vcf/examples/<id>, /api/vcf/explore (Workflow 4)
       feedback.py             /api/reports/<id>/feedback
       auth.py                 /api/auth/* (user accounts: register, login, logout, me)
       admin.py                /api/admin/* (X-Admin-Token auth)
     reference/                local datasets
       models.py               genes, gene_aliases, drugs, drug_synonyms, drug_mechanisms, cpic_*, pbs_items,
                               source_releases
-      importers/              hgnc, chembl, cpic, clinpgx, dgidb, fda, pbs (one module per source)
+      importers/              hgnc, chembl, cpic, clinpgx, dgidb, fda, oncotree, intogen, civic, hotspots, cbioportal, pbs
       normalise.py            input → standard gene / drug identifiers
       lookup.py               local evidence queries
       text.py                 name normalisation (case, whitespace, salt forms)
     services/
-      explorer.py             orchestrates one exploration: validate → collect evidence → generate reports
+      explorer.py             orchestrates one gene search through the workflow stages
+      vcf_explorer.py         orchestrates Workflow 4 (patient VCF)
+      variants/               Workflow 4: parse (VCF / MAF), vep, oncokb, cancer_types, matching, biology,
+                              pipeline (deterministic tools), agents (exploration agents, LLM)
+    mock_vcfs/                synthetic mock VCFs + manifest.json (Workflow 4 test data)
+  scripts/make_mock_vcfs.py   regenerates the mock VCFs (positions from Ensembl VEP)
+      workflow/               one module per stage: resolution, profiles, evidence
       relations.py            relationship types and the DGIdb label mapping
-      panel.py                gene panel file parsing
       prompts.py              default template, evidence formatting, template rendering
-      biomed/                 dgidb.py, pharmgkb.py, pubtator.py, drugbank.py, aggregator.py
+      biomed/                 dgidb.py, pharmgkb.py, pubtator.py, drugbank.py, uniprot.py (live),
+                              aggregator.py (runs stages 2–4)
       llm/                    openai_client.py, anthropic_client.py, report_generator.py
   tests/                      pytest
 frontend/
   index.html  admin.html
   css/style.css
-  js/ api.js  main.js  auth.js  background.js  profile.js  summary.js  table.js  network.js  availability.js  admin.js  util.js
+  js/ api.js  main.js  vcf.js  auth.js  background.js  profile.js  workflow.js  summary.js  table.js  network.js  availability.js  admin.js  util.js
 ```
 
+## MLflow
+run cd backend && .venv/bin/flask --app run mlflow-ui
+open http://127.0.0.1:5050 for MLflow logbook
+cd backend && .venv/bin/flask --app run mlflow-eval
+cd backend && .venv/bin/flask --app run mlflow-eval --llm
+cd backend && .venv/bin/flask --app run mlflow-eval --case mock_luad_kras_g12c
+
+ 
 ## API reference
 
 | Method   | Path                                      | Description                                                                                                           |
 | -------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| GET      | `/api/meta`                               | Relationship types, model info, limits, imported reference data versions                                              |
-| POST     | `/api/panels/parse`                       | Upload a gene panel file (multipart field `file`) → list of genes                                                     |
-| POST     | `/api/explore`                            | `{entities, entity_type: auto\|gene\|drug, relation_types[], compare}`                                                |
-| GET      | `/api/queries/<id>`                       | Fetch the full result of a past query, plus `entity_details` (HGNC / ChEMBL fields for the results header)            |
-| POST     | `/api/queries/<id>/ask`                   | Follow-up / re-ask `{followup_question, compare}`; reuses the evidence when entities and relation types are unchanged |
+| GET      | `/api/meta`                               | Relationship types, model info, imported reference data versions                                                      |
+| POST     | `/api/explore`                            | `{gene, relation_types[], compare, confirm_unresolved}`; one gene per search                                          |
+| GET      | `/api/vcf/options`                        | Workflow 4 form: lung cancer types (OncoTree), the synthetic mock VCFs, QC thresholds                                 |
+| GET      | `/api/vcf/examples/<id>`                  | Download one mock VCF                                                                                                  |
+| POST     | `/api/vcf/explore`                        | Multipart `file` (VCF / VCF.gz), `cancer_type`, `test_data=1`, `compare`; or JSON `{example, cancer_type, compare}`   |
+| GET      | `/api/queries/<id>`                       | Fetch the full result of a past query, plus `entity_details` (HGNC fields for the results header)                     |
+| POST     | `/api/queries/<id>/ask`                   | Follow-up / re-ask `{followup_question, compare}`; reuses the evidence when the gene and relation types are unchanged  |
 | POST     | `/api/reports/<id>/feedback`              | `{rating 1–5, comment, suggestion}`                                                                                   |
 | POST     | `/api/auth/register`, `/api/auth/login`   | `{email, password}` (email only, case-insensitive); sets a signed session cookie                                      |
 | POST     | `/api/auth/logout`                        | Clear the session                                                                                                     |

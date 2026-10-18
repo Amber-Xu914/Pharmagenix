@@ -1,22 +1,19 @@
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, jsonify, request
 
-from ..errors import APIError
 from ..extensions import db
 from ..models import Query, iso
 from ..reference.lookup import entity_details, latest_releases
 from ..services.explorer import run_exploration
+from ..services.vcf_explorer import run_vcf_followup
 from ..services.llm import provider_info
-from ..services.panel import parse_gene_panel
 from ..services.relations import DEFAULT_RELATION_TYPES, RELATION_TYPES
 
 bp = Blueprint("explore", __name__)
 
-MAX_PANEL_BYTES = 200_000
-
 
 def _query_response(query, status=200):
     data = query.to_dict()
-    # Aligned with evidence.normalisation; feeds the entity header on the results page.
+    # Aligned with evidence.normalisation; feeds the gene header on the results page.
     data["entity_details"] = entity_details((query.evidence or {}).get("normalisation"))
     return jsonify(data), status
 
@@ -28,34 +25,21 @@ def meta():
         relation_types=[{"key": k, "label": v["label"]} for k, v in RELATION_TYPES.items()],
         default_relation_types=DEFAULT_RELATION_TYPES,
         providers=provider_info(),
-        limits={"max_entities": current_app.config["MAX_ENTITIES"]},
         # Shown on the home page as "reference data last updated"; empty until `import-data` has run.
         reference_data=[{"source": source, "version": r.version, "imported_at": iso(r.imported_at)}
                         for source, r in latest_releases().items()],
     )
 
 
-@bp.post("/panels/parse")
-def parse_panel():
-    upload = request.files.get("file")
-    if upload is None:
-        raise APIError("Upload a gene panel file in the 'file' field")
-    raw = upload.read(MAX_PANEL_BYTES + 1)
-    if len(raw) > MAX_PANEL_BYTES:
-        raise APIError("Gene panel file is too large (max 200 KB)")
-    text = raw.decode("utf-8", errors="replace")
-    return jsonify(parse_gene_panel(text, current_app.config["MAX_ENTITIES"]))
-
-
 @bp.post("/explore")
 def explore():
     body = request.get_json(silent=True) or {}
     query = run_exploration(
-        entities=body.get("entities"),
-        entity_type=body.get("entity_type", "auto"),
+        gene=body.get("gene"),
         relation_types=body.get("relation_types"),
         compare=bool(body.get("compare")),
         followup_question=body.get("followup_question"),
+        confirm_unresolved=bool(body.get("confirm_unresolved")),
     )
     return _query_response(query, 201)
 
@@ -74,12 +58,14 @@ def get_query(query_id):
 
 @bp.post("/queries/<int:query_id>/ask")
 def ask_again(query_id):
-    """Re-ask / follow-up. Reuses the parent's evidence when entities and relation types are unchanged."""
+    """Re-ask / follow-up. Reuses the parent's evidence when the gene and relation types are unchanged."""
     parent = db.get_or_404(Query, query_id)
     body = request.get_json(silent=True) or {}
+    if parent.entity_type == "vcf":
+        query = run_vcf_followup(parent, body.get("followup_question"), bool(body.get("compare")))
+        return _query_response(query, 201)
     query = run_exploration(
-        entities=body.get("entities") or parent.entities,
-        entity_type=body.get("entity_type") or parent.entity_type,
+        gene=body.get("gene") or parent.entities[0],
         relation_types=body.get("relation_types") or parent.relation_types,
         compare=bool(body.get("compare")),
         followup_question=body.get("followup_question"),

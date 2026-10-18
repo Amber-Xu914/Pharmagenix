@@ -22,6 +22,17 @@ export const CATEGORY_LABELS = {
   snp: "SNP-specific response",
   other: "Unspecified",
   variant_of: "Variant of",
+  sensitive: "Response (CIViC / OncoKB)",
+  resistant: "Resistance",
+  gene_link: "Gene-level link (DGIdb / ChEMBL)",
+};
+
+/** Stage 4 evidence grades, strongest first (see backend services/workflow/evidence.py). */
+export const GRADES = {
+  strong: "Strong",
+  moderate: "Moderate",
+  supportive: "Supportive",
+  limited: "Limited",
 };
 
 export function categoryColor(key) {
@@ -51,6 +62,14 @@ export function describeEvidence(item) {
       return `PubTator · ${item.title} ${item.journal || ""} (${item.year || "n.d."}). PMID ${item.pmid}`;
     case "drug_info":
       return `DrugBank · ${item.drug} (${item.drugbank_id || ""})`;
+    case "variant":
+      return `Patient variant · ${item.notation}${item.hgvsc ? ` (${item.hgvsc})` : ""}`;
+    case "civic":
+      return `CIViC EID${item.evidence_id} · ${item.molecular_profile} – ${item.therapies.join(", ")} (${item.significance}; level ${item.level}; ${item.disease})`;
+    case "oncokb":
+      return `OncoKB · ${item.gene} ${item.protein_change} – ${item.drug} (${item.level})`;
+    case "profile":
+      return `${item.source} · ${item.entity} gene profile${item.protein?.protein_name ? ` (${item.protein.protein_name})` : ""}`;
     default:
       return `${item.source} · ${item.id}`;
   }

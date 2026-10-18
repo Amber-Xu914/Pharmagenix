@@ -149,6 +149,7 @@ def stub_live_sources(monkeypatch):
     monkeypatch.setattr("app.services.biomed.dgidb.DGIdbClient.fetch_interactions", dgidb)
     monkeypatch.setattr("app.services.biomed.pharmgkb.PharmGKBClient.clinical_annotations", lambda self, **kw: [])
     monkeypatch.setattr("app.services.biomed.pubtator.PubTatorClient.search_pairs", lambda self, *a, **kw: [])
+    monkeypatch.setattr("app.services.biomed.uniprot.UniProtClient.protein", lambda self, **kw: None)
     return calls
 
 
@@ -156,31 +157,42 @@ def test_collect_evidence_uses_reference_data(app, reference_data, stub_live_sou
     from app.services.biomed import collect_evidence
     from app.services.relations import DEFAULT_RELATION_TYPES
 
-    evidence = collect_evidence(["Plavix"], "auto", DEFAULT_RELATION_TYPES)
+    evidence = collect_evidence("CPCJ", DEFAULT_RELATION_TYPES)
 
-    assert stub_live_sources["dgidb"] == ([], ["CLOPIDOGREL"])  # DGIdb queried with the normalised name
-    assert evidence["normalisation"][0]["matched_by"] == "ChEMBL synonym (trade name)"
+    assert stub_live_sources["dgidb"] == (["CYP2C19"], [])  # DGIdb queried with the normalised symbol
+    assert evidence["normalisation"][0]["matched_by"] == "HGNC alias"
     kinds = [i["kind"] for i in evidence["items"]]
-    assert kinds == ["interaction", "mechanism", "guideline"]  # salt form merged into one interaction
+    assert kinds == ["interaction", "guideline", "profile"]  # salt form merged into one interaction
     assert (evidence["items"][0]["score"], evidence["items"][0]["sources"]) == (2.0, ["CPIC", "PharmGKB"])
-    guideline = evidence["items"][2]
+    guideline = evidence["items"][1]
     assert guideline["recommendations"][0]["recommendation"] == "Avoid clopidogrel"  # actionable first
-    assert evidence["source_status"]["chembl"] == {"state": "ok", "count": 1, "version": "chembl test"}
+    assert evidence["source_status"]["chembl"] == {"state": "ok", "count": 0, "version": "chembl test"}
+    assert evidence["outcome"]["status"] == "found"
     assert len(evidence["australian_availability"]) == 1  # one row per drug, not per salt form
     assert evidence["australian_availability"][0]["pbs_listed"] is True
     assert evidence["australian_availability"][0]["items"][0]["brands"] == ["Clovix 75", "Plidogrel"]
     categories = {e["data"]["category"] for e in evidence["network"]["edges"]}
-    assert categories == {"other", "inhibit", "snp"}  # ChEMBL "antagonist" counts as inhibition
+    assert categories == {"other", "snp"}
+    assert [s["stage"] for s in evidence["trace"]] == ["resolution", "profiles", "retrieval", "evidence"]
+
+
+def test_collect_evidence_mechanisms(app, reference_data, stub_live_sources):
+    from app.services.biomed import collect_evidence
+
+    evidence = collect_evidence("P2RY12", [])
+    mechanism = next(i for i in evidence["items"] if i["kind"] == "mechanism")
+    assert (mechanism["drug"], mechanism["categories"]) == ("CLOPIDOGREL", ["inhibit"])  # antagonist → inhibition
 
 
 def test_collect_evidence_without_reference_data(app, stub_live_sources):
     from app.services.biomed import collect_evidence
 
-    evidence = collect_evidence(["CYP2C19"], "auto", ["snp", "other"])
-    assert stub_live_sources["dgidb"] == (["CYP2C19"], ["CYP2C19"])  # unresolved: tried as both
+    evidence = collect_evidence("CYP2C19", ["snp", "other"])
+    assert stub_live_sources["dgidb"] == (["CYP2C19"], [])  # unresolved: searched as typed
     assert evidence["source_status"]["chembl"]["state"] == "disabled"
     assert evidence["source_status"]["pbs"]["state"] == "disabled"
     assert evidence["australian_availability"] is None  # frontend shows "not imported"
+
 
 # ---------- CPIC supporting tables, ClinPGx, DGIdb, FDA ----------
 

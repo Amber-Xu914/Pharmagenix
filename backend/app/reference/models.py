@@ -10,7 +10,7 @@ class SourceRelease(db.Model):
     __tablename__ = "source_releases"
 
     id = db.Column(db.Integer, primary_key=True)
-    source = db.Column(db.String(32), nullable=False, index=True)  # hgnc | chembl | cpic | clinpgx | dgidb | fda | pbs
+    source = db.Column(db.String(32), nullable=False, index=True)  # hgnc | chembl | cpic | clinpgx | dgidb | fda | oncotree | intogen | civic | hotspots | cbioportal | pbs
     version = db.Column(db.String(100))
     url = db.Column(db.String(500))
     record_counts = db.Column(db.JSON)
@@ -340,6 +340,93 @@ class FdaPgxBiomarker(db.Model):
     gene_symbol = db.Column(db.String(64), index=True)
     hgnc_id = db.Column(db.String(20))
     labeling_sections = db.Column(db.JSON)
+
+
+# ---------- Workflow 4 (patient VCF): OncoTree, IntOGen, CIViC ----------
+
+class OncotreeType(db.Model):
+    """OncoTree cancer types, the standard terms a cancer type / subtype is mapped to (e.g. LUAD)."""
+
+    __tablename__ = "oncotree_types"
+
+    code = db.Column(db.String(20), primary_key=True)
+    name = db.Column(db.String(255), nullable=False)
+    main_type = db.Column(db.String(255))
+    tissue = db.Column(db.String(100), index=True)
+    parent = db.Column(db.String(20))
+    level = db.Column(db.Integer)
+
+
+class IntogenDriver(db.Model):
+    """IntOGen compendium: a gene found to be a cancer driver in one cohort (one row per gene and cohort)."""
+
+    __tablename__ = "intogen_drivers"
+
+    id = db.Column(db.Integer, primary_key=True)
+    gene_symbol = db.Column(db.String(64), nullable=False, index=True)
+    cancer_type = db.Column(db.String(32), nullable=False, index=True)  # IntOGen code, close to OncoTree (LUAD)
+    cohort = db.Column(db.String(100), nullable=False)
+    role = db.Column(db.String(16))  # Act (oncogene) | LoF (tumour suppressor) | ambiguous
+    samples = db.Column(db.Integer)
+    pct_samples = db.Column(db.Float)  # share of the cohort's samples with a driver mutation in the gene
+    qvalue = db.Column(db.Float)
+
+
+class CivicEvidence(db.Model):
+    """CIViC predictive (drug response) evidence. One row per evidence item and gene of its molecular profile;
+    components holds the parsed profile (e.g. EGFR L858R OR EGFR Exon 19 Deletion) for variant matching."""
+
+    __tablename__ = "civic_evidence"
+
+    id = db.Column(db.Integer, primary_key=True)
+    evidence_id = db.Column(db.Integer, nullable=False, index=True)
+    gene_symbol = db.Column(db.String(64), nullable=False, index=True)
+    molecular_profile = db.Column(db.String(500), nullable=False)
+    molecular_profile_id = db.Column(db.Integer)
+    components = db.Column(db.JSON)  # {"op": "AND" | "OR", "parts": [{"gene", "variant", "kind"}]}
+    disease = db.Column(db.String(255))
+    doid = db.Column(db.String(20), index=True)
+    therapies = db.Column(db.JSON)  # ["Osimertinib"]
+    therapy_interaction = db.Column(db.String(32))  # Combination | Substitutes | Sequential
+    direction = db.Column(db.String(16))  # Supports | Does Not Support
+    level = db.Column(db.String(1))  # A validated · B clinical · C case study · D preclinical · E inferential
+    significance = db.Column(db.String(32))  # Sensitivity/Response | Resistance | Reduced Sensitivity | ...
+    statement = db.Column(db.Text)
+    pmid = db.Column(db.Integer)
+    citation = db.Column(db.String(255))
+    rating = db.Column(db.Integer)  # 1–5 curator trust rating
+    variant_origin = db.Column(db.String(32))
+    url = db.Column(db.String(255))
+
+
+
+class CancerHotspot(db.Model):
+    """cancerhotspots.org (Chang et al.): recurrently mutated residues and in-frame indel regions across cancers."""
+
+    __tablename__ = "cancer_hotspots"
+
+    id = db.Column(db.Integer, primary_key=True)
+    gene_symbol = db.Column(db.String(64), nullable=False, index=True)
+    residue = db.Column(db.String(32), nullable=False)  # V600, or 745-759 for an in-frame indel region
+    start = db.Column(db.Integer, nullable=False)  # amino acid positions
+    end = db.Column(db.Integer, nullable=False)
+    hotspot_type = db.Column(db.String(32))  # single residue | in-frame indel
+    tumor_count = db.Column(db.Integer)  # tumours with a mutation at the hotspot
+    variant_amino_acids = db.Column(db.JSON)  # {"E": 897, "K": 12}
+
+
+class SubtypeGeneFrequency(db.Model):
+    """cBioPortal: share of a subtype cohort's sequenced samples with a mutation in the gene (Tier 3 R component)."""
+
+    __tablename__ = "subtype_gene_frequencies"
+
+    id = db.Column(db.Integer, primary_key=True)
+    oncotree_code = db.Column(db.String(20), nullable=False, index=True)  # LUAD, LUSC, NSCLC, SCLC
+    study_id = db.Column(db.String(100), nullable=False)
+    gene_symbol = db.Column(db.String(64), nullable=False, index=True)
+    altered = db.Column(db.Integer, nullable=False)
+    profiled = db.Column(db.Integer, nullable=False)
+    frequency = db.Column(db.Float, nullable=False)
 
 
 # ---------- PBS (Australia) ----------

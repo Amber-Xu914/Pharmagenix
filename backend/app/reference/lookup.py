@@ -57,7 +57,8 @@ def latest_releases():
     return {r.source: r for r in rows}
 
 
-def chembl_mechanisms(genes, drug_ids, limit=100):
+def chembl_mechanisms(genes, drug_ids, limit=100, pairs=()):
+    """pairs: (gene symbol, ChEMBL ID) the user asked about; their rows are always kept, whatever the limit."""
     if not genes and not drug_ids:
         return []
     conditions = []
@@ -65,10 +66,15 @@ def chembl_mechanisms(genes, drug_ids, limit=100):
         conditions.append(DrugMechanism.gene_symbol.in_(genes))
     if drug_ids:
         conditions.append(DrugMechanism.chembl_id.in_(drug_ids))
+    pair_rows = []
+    for gene, chembl_id in pairs:
+        pair_rows += db.session.scalars(db.select(DrugMechanism).where(
+            DrugMechanism.gene_symbol == gene, DrugMechanism.chembl_id == chembl_id)).all()
     rows = db.session.scalars(
         db.select(DrugMechanism).where(db.or_(*conditions))
         .order_by(DrugMechanism.max_phase.desc(), DrugMechanism.mec_id).limit(limit)
     ).all()
+    rows = list({r.id: r for r in pair_rows + list(rows)}.values())
     return [{
         "gene": r.gene_symbol,
         "drug": norm(r.drug_name or r.chembl_id),
@@ -85,7 +91,8 @@ def chembl_mechanisms(genes, drug_ids, limit=100):
     } for r in rows]
 
 
-def cpic_guidelines(genes, drug_names, drug_ids, per_pair=6, limit=30):
+def cpic_guidelines(genes, drug_names, drug_ids, per_pair=6, limit=30, pairs=()):
+    """pairs: (gene symbol, drug name) the user asked about; listed first so the limit never drops them."""
     conditions = []
     if genes:
         conditions.append(CpicPair.gene_symbol.in_(genes))
@@ -95,11 +102,13 @@ def cpic_guidelines(genes, drug_names, drug_ids, per_pair=6, limit=30):
         conditions.append(CpicPair.chembl_id.in_(drug_ids))
     if not conditions:
         return []
-    pairs = db.session.scalars(db.select(CpicPair).where(db.or_(*conditions))).all()
-    pairs = sorted(pairs, key=lambda p: CPIC_LEVEL_ORDER.get(p.cpic_level, 9))[:limit]
+    wanted = {(gene.upper(), norm(drug)) for gene, drug in pairs}
+    rows = db.session.scalars(db.select(CpicPair).where(db.or_(*conditions))).all()
+    rows = sorted(rows, key=lambda p: ((p.gene_symbol.upper(), p.drug_name_norm) not in wanted,
+                                       CPIC_LEVEL_ORDER.get(p.cpic_level, 9)))[:limit]
 
     out = []
-    for p in pairs:
+    for p in rows:
         recommendations = []
         if p.guideline_id:
             recs = db.session.scalars(db.select(CpicRecommendation).where(
