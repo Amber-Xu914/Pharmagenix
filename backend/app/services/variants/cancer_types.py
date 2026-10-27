@@ -39,17 +39,19 @@ MATCH_LABELS = {3: "same cancer type", 2: "related lung cancer", 1: "other tumou
 
 
 def lung_types():
-    """[{code, name, parent, level}] for the cancer type picker."""
+    """[{code, name, main_type, parent, level}] for the cancer type picker."""
     rows = db.session.scalars(db.select(OncotreeType).where(OncotreeType.tissue == "Lung")
                               .order_by(OncotreeType.level, OncotreeType.name)).all()
     if rows:
-        return [{"code": r.code, "name": r.name, "parent": r.parent, "level": r.level} for r in rows]
-    return [{"code": code, "name": name, "parent": parent, "level": None} for code, (name, parent) in FALLBACK.items()]
+        return [{"code": r.code, "name": r.name, "main_type": r.main_type, "parent": r.parent, "level": r.level}
+                for r in rows]
+    return [{"code": code, "name": name, "main_type": None, "parent": parent, "level": None}
+            for code, (name, parent) in FALLBACK.items()]
 
 
 def resolve_cancer_type(raw):
     """'luad' / 'Lung adenocarcinoma' / 'NSCLC' / 'Lung Adenocarcinoma (LUAD)' (the form's suggestions)
-    -> {"input", "code", "name", "lineage": [code, parent, ...]}."""
+    -> {"input", "code", "name", "lineage": [code, parent, ...], "main_types": names an OncoKB main type may use}."""
     key = re.sub(r"\s+", " ", (raw or "").strip().upper())
     suggested = re.fullmatch(r".*\(([A-Z0-9]+)\)", key)  # "NAME (CODE)": the code in brackets decides
     if suggested:
@@ -66,7 +68,19 @@ def resolve_cancer_type(raw):
     while current and current in types and current not in lineage:
         lineage.append(current)
         current = types[current]["parent"]
-    return {"input": raw, "code": code, "name": types[code]["name"], "lineage": lineage}
+    # As in disease_match, the generic "lung" level only counts when the patient's type is just "lung".
+    main_types = sorted({n.upper() for i, c in enumerate(lineage) if c != "LUNG" or i == 0
+                         for n in (types[c]["name"], types[c].get("main_type")) if n})
+    return {"input": raw, "code": code, "name": types[code]["name"], "lineage": lineage, "main_types": main_types}
+
+
+def oncokb_in_subtype(treatment, cancer):
+    """Whether an OncoKB level applies to the patient's cancer type: its OncoTree code is in the lineage, or it is
+    attached to a main type (no code) that the patient's type falls under."""
+    if treatment.get("cancer_code"):
+        return treatment["cancer_code"] in cancer["lineage"]
+    main = (treatment.get("cancer_main_type") or "").upper()
+    return bool(main) and main in cancer.get("main_types", [])
 
 
 def disease_match(doid, cancer):

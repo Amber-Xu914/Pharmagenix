@@ -1,4 +1,4 @@
-"""Run workflow stages 2–4 for one gene and normalise the result into one evidence bundle.
+"""Run workflow stages 2–4 for one gene or drug and normalise the result into one evidence bundle.
 
 The bundle is stored on the Query row and drives every output:
   trace                  -> what each stage did, shown as the workflow stepper on the results page
@@ -22,7 +22,7 @@ from ...reference.normalise import resolve_entities
 from ...reference.text import strip_salt
 from ..relations import categorize, matches
 from ..workflow.evidence import consolidate_pairs, decide_outcome
-from ..workflow.profiles import build_gene_profile
+from ..workflow.profiles import build_drug_profile, build_gene_profile
 from .dgidb import DGIdbClient
 from .drugbank import DrugBankClient
 from .pharmgkb import PharmGKBClient
@@ -60,21 +60,26 @@ def _local(status, releases, name, fn):
     return _safe(status, name, fn, version=release.version)
 
 
-def collect_evidence(gene, relation_types, resolved=None):
-    """gene: the name the user typed. resolved: its stage 1 entry (explorer.py has already checked it)."""
+def collect_evidence(name, relation_types, resolved=None, entity_type="gene"):
+    """name: what the user typed; entity_type: "gene" (gene -> drugs) or "drug" (drug -> genes).
+    resolved: its stage 1 entry (explorer.py has already checked it)."""
     cfg = current_app.config
     timeout = cfg["HTTP_TIMEOUT"]
     status = {}
     releases = lookup.latest_releases()
     wants_snp = not relation_types or "snp" in relation_types
 
-    # Stage 1: entity resolution against HGNC. A name missing from HGNC is searched as typed.
-    entry = resolved or resolve_entities([gene], "gene")[0]
+    # Stage 1: entity resolution against HGNC (genes) or ChEMBL / PBS names (drugs). A name that isn't found is
+    # searched as typed.
+    entry = resolved or resolve_entities([name], entity_type)[0]
     symbol = entry["name"]
+    is_drug = entity_type == "drug"
+    genes, drugs = ([], [symbol]) if is_drug else ([symbol], [])
+    drug_ids = [entry["id"]] if is_drug and entry.get("id") else []
 
-    # Stage 3a: DGIdb, the broad list of drugs that interact with the gene.
+    # Stage 3a: DGIdb, the broad list of drug–gene interactions for the gene (or the drug).
     dgidb = DGIdbClient(cfg["DGIDB_URL"], timeout)
-    interactions = _safe(status, "dgidb", lambda: dgidb.fetch_interactions(genes=[symbol]))
+    interactions = _safe(status, "dgidb", lambda: dgidb.fetch_interactions(genes=genes, drugs=drugs))
     interactions = _filter(_merge_salt_forms(interactions), "interaction_types", relation_types)
     interactions.sort(key=lambda it: -(it["score"] or 0))
     interactions = interactions[: cfg["MAX_INTERACTIONS"]]
@@ -83,7 +88,7 @@ def collect_evidence(gene, relation_types, resolved=None):
 
     # Stage 3b: ChEMBL (local), curated mechanisms with action types.
     mechanisms = _local(status, releases, "chembl", lambda: lookup.chembl_mechanisms(
-        [symbol], [], limit=cfg["MAX_MECHANISMS"]))
+        genes, drug_ids, limit=cfg["MAX_MECHANISMS"]))
     mechanisms = _filter(mechanisms, "action_type", relation_types)
     if status["chembl"]["state"] == "ok":
         status["chembl"]["count"] = len(mechanisms)
@@ -92,10 +97,10 @@ def collect_evidence(gene, relation_types, resolved=None):
     guidelines, variants = [], []
     if wants_snp:
         guidelines = _local(status, releases, "cpic", lambda: lookup.cpic_guidelines(
-            [symbol], [], [], limit=cfg["MAX_GUIDELINES"]))
+            genes, drugs, drug_ids, limit=cfg["MAX_GUIDELINES"]))
         pgkb = PharmGKBClient(cfg["PHARMGKB_URL"], timeout)
         variants = _safe(status, "pharmgkb", lambda: pgkb.clinical_annotations(
-            genes=[symbol], limit=cfg["MAX_VARIANT_ANNOTATIONS"]))
+            genes=genes, drugs=drugs, limit=cfg["MAX_VARIANT_ANNOTATIONS"]))
     else:
         status["cpic"] = status["pharmgkb"] = {"state": "skipped", "count": 0}
 
@@ -103,7 +108,7 @@ def collect_evidence(gene, relation_types, resolved=None):
     drugbank = DrugBankClient(cfg["DRUGBANK_URL"], cfg["DRUGBANK_API_KEY"], timeout)
     drug_info = []
     if drugbank.enabled:
-        top_drugs = _unique([it["drug"] for it in interactions])[:10]
+        top_drugs = drugs or _unique([it["drug"] for it in interactions])[:10]
         drug_info = _safe(status, "drugbank", lambda: drugbank.lookup_drugs(top_drugs))
     else:
         status["drugbank"] = {"state": "disabled", "count": 0, "error": "DRUGBANK_API_KEY not set"}
@@ -116,14 +121,18 @@ def collect_evidence(gene, relation_types, resolved=None):
 
     # Australian context: PBS (local) listing for the most relevant drugs.
     pbs_drugs = _pbs_candidates(guidelines, mechanisms, interactions, cfg["MAX_PBS_DRUGS"])
+    if is_drug:  # the searched drug first, whatever else is listed
+        pbs_drugs = [(symbol, entry.get("id"))] + [d for d in pbs_drugs if strip_salt(d[0]) != strip_salt(symbol)]
+        pbs_drugs = pbs_drugs[: cfg["MAX_PBS_DRUGS"]]
     availability = _local(status, releases, "pbs", lambda: lookup.pbs_availability(pbs_drugs))
     if status["pbs"]["state"] == "ok":
         status["pbs"]["count"] = sum(1 for a in availability if a["pbs_listed"])
     elif status["pbs"]["state"] == "disabled":
         availability = None
 
-    # Stage 2: the gene profile (HGNC + UniProt).
-    profile = build_gene_profile(entry, UniProtClient(cfg["UNIPROT_URL"], timeout), status)
+    # Stage 2: the profile, gene (HGNC + UniProt) or drug (ChEMBL).
+    profile = (build_drug_profile(entry) if is_drug
+               else build_gene_profile(entry, UniProtClient(cfg["UNIPROT_URL"], timeout), status))
 
     items = build_evidence_items(interactions, variants, drug_info, publications, mechanisms, guidelines,
                                  releases, profiles=[profile])
@@ -136,7 +145,7 @@ def collect_evidence(gene, relation_types, resolved=None):
 
     return {
         "outcome": outcome,
-        "trace": _trace(entry, status, table, outcome),
+        "trace": _trace(entry, status, table, outcome, entity_type),
         "normalisation": [entry],
         "items": items,
         "table": table,
@@ -159,7 +168,7 @@ SOURCE_LABELS = {"dgidb": "DGIdb", "chembl": "ChEMBL", "cpic": "CPIC", "pharmgkb
                  "drugbank": "DrugBank", "pubtator": "PubTator", "uniprot": "UniProt"}
 
 
-def _trace(entry, status, table, outcome):
+def _trace(entry, status, table, outcome, entity_type="gene"):
     """One line per workflow stage for the results page. Stages 5–6 are added by the frontend from the reports."""
     def sources(keys):
         parts = []
@@ -176,7 +185,8 @@ def _trace(entry, status, table, outcome):
     return [
         {"stage": "resolution", "status": "done" if entry["type"] else "warning",
          "detail": f"{entry['input']} → {entry['name']}" if entry["type"] else f"{entry['input']} searched as typed"},
-        {"stage": "profiles", "status": "done", "detail": f"gene profile · {sources(['uniprot'])}"},
+        {"stage": "profiles", "status": "done", "detail": "drug profile · ChEMBL" if entity_type == "drug"
+         else f"gene profile · {sources(['uniprot'])}"},
         {"stage": "retrieval", "status": "done",
          "detail": sources(["dgidb", "chembl", "cpic", "pharmgkb", "pubtator", "drugbank"])},
         {"stage": "evidence", "status": "done" if outcome["status"] != "none" else "warning",

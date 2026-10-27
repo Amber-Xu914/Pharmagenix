@@ -126,8 +126,7 @@ def _finalize(query, template, job):
 
         report.model = log.model = result.model or model
         report.content_md = log.raw_response = result.text
-        report.citations = [eid for eid in used if eid not in invalid]
-        report.invalid_citations = invalid
+        report.set_citations(used, invalid, {i["id"]: i for i in (query.evidence or {}).get("items") or []})
         report.status = "flagged" if problems else "success"
         report.error_message = "; ".join(problems) or None
         report.latency_ms = log.latency_ms = result.latency_ms

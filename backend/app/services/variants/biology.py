@@ -5,6 +5,9 @@ Interpretation agent. Pathways: a curated subset of the ten TCGA PanCancer oncog
 (Sanchez-Vega et al., Cell 2018), limited to well-established members.
 """
 
+from ...extensions import db
+from ...reference.models import GenePathway
+
 PATHWAYS = {
     "RTK/RAS": {"EGFR", "ERBB2", "ERBB3", "ERBB4", "MET", "ALK", "ROS1", "RET", "NTRK1", "NTRK2", "NTRK3", "FGFR1",
                 "FGFR2", "FGFR3", "FGFR4", "KIT", "PDGFRA", "IGF1R", "KRAS", "NRAS", "HRAS", "BRAF", "RAF1", "ARAF",
@@ -35,8 +38,24 @@ CO_MUTATION_PATTERNS = [
 ]
 
 
+PATHWAY_SOURCE = "TCGA PanCancer oncogenic signalling pathways (Sanchez-Vega et al., Cell 2018), curated subset"
+
+
 def pathways_of(gene):
-    return sorted(name for name, genes in PATHWAYS.items() if gene in genes)
+    """The gene's pathways from the gene_pathways table (seeded from PATHWAYS); PATHWAYS itself if not seeded."""
+    if db.session.query(GenePathway.id).first() is None:
+        return sorted(name for name, genes in PATHWAYS.items() if gene in genes)
+    return sorted(db.session.scalars(db.select(GenePathway.pathway).where(GenePathway.gene_symbol == gene)))
+
+
+def seed_pathways():
+    """(Re)load gene_pathways from PATHWAYS. Returns the number of rows."""
+    db.session.execute(db.delete(GenePathway))
+    rows = [GenePathway(pathway=name, gene_symbol=gene, source=PATHWAY_SOURCE)
+            for name, genes in PATHWAYS.items() for gene in sorted(genes)]
+    db.session.add_all(rows)
+    db.session.commit()
+    return len(rows)
 
 
 def co_mutation_patterns(genes):

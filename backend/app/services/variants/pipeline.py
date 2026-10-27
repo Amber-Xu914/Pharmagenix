@@ -24,6 +24,7 @@ import re
 from flask import current_app
 
 from ... import tracking
+from ...errors import APIError
 
 from ...extensions import db
 from ...reference import lookup
@@ -36,7 +37,8 @@ from ...reference.text import norm, strip_salt
 from ..biomed.dgidb import DGIdbClient
 from ..biomed.pubtator import PubTatorClient
 from .biology import co_mutation_patterns, pathways_of
-from .cancer_types import MATCH_LABELS, disease_match
+from .cancer_types import MATCH_LABELS, disease_match, oncokb_in_subtype
+from .literature import Query as LiteratureQuery, retrieve
 from .matching import SPECIFICITY, match_profile
 from .oncokb import ESTABLISHED as ONCOKB_ESTABLISHED, OncoKBClient
 from .parse import PROTEIN_ALTERING, TRUNCATING
@@ -85,6 +87,14 @@ def _safe(status, name, fn, count=len):
         status[name] = {"state": "ok", "count": count(result) if result is not None else 0}
         tracking.set_outputs(s, status[name])
         return result
+
+
+def _short_error(error):
+    """'503 Server Error: Service Unavailable for url: ...' -> '503 Service Unavailable'; timeouts -> 'timed out'."""
+    match = re.match(r"(\d{3}) [A-Za-z ]*Error: ([^:]+?)(?: for url|$)", error or "")
+    if match:
+        return f"{match.group(1)} {match.group(2).strip()}"
+    return "timed out" if "timed out" in (error or "").lower() else (error or "no answer")[:80]
 
 
 def _drop(v, stage, reason):
@@ -149,7 +159,10 @@ def _annotate(variants, info, status):
     for v in variants[cfg["MAX_VCF_VARIANTS"]:]:
         _drop(v, "qc", f"over the {cfg['MAX_VCF_VARIANTS']}-variant annotation limit")
     if status["vep"]["state"] == "error" and info.get("annotation") is None:
-        raise RuntimeError(f"Variant annotation (Ensembl VEP) failed: {status['vep']['error']}")
+        # The 503 / timeout the public server sometimes gives is reported to the user, not as a 500
+        raise APIError("Ensembl VEP, the variant annotation service, is not responding right now "
+                       f"({_short_error(status['vep']['error'])}), and it has no stored answer for this file. "
+                       "Please try again in a few minutes.", 503)
 
 
 # ---------- Stage 2: entity resolution ----------
@@ -209,7 +222,7 @@ def oncokb_matches(variants, cancer, status):
         out = []
         for v in candidates:
             for t in client.annotate(v["gene"], v["protein_change"], cancer["code"]):
-                out.append({**t, "variant_ids": [v["id"]], "subtype": t.get("cancer_type") in cancer["lineage"]})
+                out.append({**t, "variant_ids": [v["id"]], "subtype": oncokb_in_subtype(t, cancer)})
         return out
 
     return _safe(status, "oncokb", fetch) or []
@@ -616,7 +629,7 @@ def _score(c, variants, labels, drug_index, mechanisms, papers):
     drug = db.session.get(Drug, c["chembl_id"]) if c["chembl_id"] else None
     c["approved"] = bool(drug and (drug.max_phase or 0) >= 4)
     if c["approved"]:
-        parts.append(("approved drug (ChEMBL)", 5))
+        parts.append(("marketed drug (ChEMBL phase 4, any indication)", 5))
     if c["strong_resistance"]:
         parts.append(("resistance from the patient's variants", STRONG_RESISTANCE_PENALTY))
     elif c["resistance"]:
@@ -643,39 +656,56 @@ def _score(c, variants, labels, drug_index, mechanisms, papers):
 
 # ---------- Stage 6 input: the literature search behind the Literature agent ----------
 
-def literature_search(tiered, candidates, status, items):
-    """PubTator searches for Tier 3 variants and level 3–4 (C–E) drug pairs. Hits become citable publication items
-    and count as literature support for the exploratory ranking. Never changes tiers or evidence levels."""
+def literature_search(tiered, candidates, cancer, status, items):
+    """Retrieval-augmented literature (literature.py) for Tier 3 variants and level 3–4 (C–E) drug pairs. Kept
+    papers become citable publication items, with the abstract sentences that answer the query, and count as
+    literature support for the exploratory ranking. Never changes tiers or evidence levels."""
     cfg = current_app.config
     budget = cfg["VCF_LITERATURE_QUERIES"]
     if not budget:
         status["pubtator"] = {"state": "skipped", "count": 0}
         return {}
+    by_id = {v["id"]: v for v in tiered}
+
+    def query(kind, key, search, v, drug=None):
+        return LiteratureQuery(kind, key, search, v["gene"], (v.get("resolved") or {}).get("entrez_id"),
+                               v.get("protein_change"), drug, cancer["name"])
+
     queries = []
     for v in sorted((v for v in tiered if v["tier"] == 3), key=lambda v: -v["tier3"]["S"]):
-        queries.append(("variant", v["id"], f"{v['gene']} {v.get('protein_change') or ''} lung cancer".replace("  ", " ")))
+        queries.append(query("variant", v["id"], f"{v['gene']} {v.get('protein_change') or ''} lung cancer"
+                             .replace("  ", " "), v))
     pairs = []
     for key, c in candidates.items():
         best = _best(c["sensitivity"])
         if best and best["level"] in ("C", "D", "E"):
-            gene = best["molecular_profile"].split(" ")[0]
-            pairs.append((LEVELS.index(best["level"]), key, f"{gene} AND {c['drug'].split(' + ')[0]}"))
-    queries += [("drug", key, q) for _, key, q in sorted(pairs)]
+            v = by_id.get(best["variant_ids"][0])
+            drug = re.sub(r"\s+Regimen$", "", c["drug"].split(" + ")[0], flags=re.IGNORECASE)
+            if v:
+                pairs.append((LEVELS.index(best["level"]), key, f"{v['gene']} AND {drug}", v, drug))
+    queries += [query("drug", key, search, v, drug) for _, key, search, v, drug in sorted(pairs, key=lambda p: p[:2])]
     queries = queries[:budget]
     client = PubTatorClient(cfg["PUBTATOR_URL"], cfg["HTTP_TIMEOUT"])
     by_drug, by_variant = {}, {}
 
     def fetch():
-        found = 0
-        seen = {}
-        for kind, key, query in queries:
-            for paper in client.search(query, limit=3):
+        found, seen = 0, {}
+        for (kind, key), papers in retrieve(queries, client, status).items():
+            for paper in papers:
+                passages = paper.pop("passages")
                 if paper["pmid"] not in seen:
                     seen[paper["pmid"]] = f"E{len(items) + 1}"
                     items.append({"id": seen[paper["pmid"]], "kind": "publication", "source": "PubTator",
-                                  "url": f"https://pubmed.ncbi.nlm.nih.gov/{paper['pmid']}/", **paper})
+                                  "url": f"https://pubmed.ncbi.nlm.nih.gov/{paper['pmid']}/", **paper, "passages": []})
                     found += 1
-                ref = {"pmid": paper["pmid"], "item_id": seen[paper["pmid"]], "title": paper.get("title")}
+                item = next(i for i in items if i["id"] == seen[paper["pmid"]])
+                for p in passages:  # one paper may answer several queries, with different sentences
+                    if p not in item["passages"]:
+                        item["passages"].append(p)
+                item["passages"].sort(key=lambda p: p["n"])
+                item["score"] = max(item["score"], paper["score"])
+                ref = {"pmid": paper["pmid"], "item_id": seen[paper["pmid"]], "title": paper.get("title"),
+                       "score": paper["score"], "sentences": [p["n"] for p in passages]}
                 (by_drug if kind == "drug" else by_variant).setdefault(key, []).append(ref)
         return found
 
@@ -771,7 +801,7 @@ def run_pipeline(variants, info, cancer):
             candidates = classify(tiered, civic, oncokb, interactions, mechanisms)
             tracking.set_outputs(s, {"candidate_drugs": len(candidates), "evidence_items": len(items)})
         with tracking.span("6_literature_search", span_type="RETRIEVER"):  # input to the Literature agent
-            literature = literature_search(tiered, candidates, status, items)
+            literature = literature_search(tiered, candidates, cancer, status, items)
         with tracking.span("7_ranking") as s:
             tracks, resistance_only = rank(candidates, tiered, mechanisms, literature)
             tracking.set_outputs(s, {name: [(c["drug"], c["score"]) for c in rows[:10]] for name, rows in tracks.items()})
@@ -856,7 +886,8 @@ def _public(v, full=False):
 
 def _trace(counts, tiered, status, tracks, cancer):
     def src(keys):
-        names = {"civic": "CIViC", "oncokb": "OncoKB", "dgidb": "DGIdb", "chembl": "ChEMBL", "pubtator": "PubTator"}
+        names = {"civic": "CIViC", "oncokb": "OncoKB", "dgidb": "DGIdb", "chembl": "ChEMBL", "pubtator": "PubTator",
+                 "medcpt": "MedCPT re-ranked"}
         parts = []
         for key in keys:
             s = status.get(key, {})
@@ -883,7 +914,7 @@ def _trace(counts, tiered, status, tracks, cancer):
          "detail": f"established {len(tracks['established'])} · exploratory {len(tracks['exploratory'])}"
                    if n_tiered else "not run"},
         {"stage": "exploration", "status": "done" if n_tiered else "skipped",
-         "detail": f"literature: {src(['pubtator'])}" if n_tiered else "not run"},
+         "detail": f"literature: {src(['pubtator', 'medcpt'])}" if n_tiered else "not run"},
     ]
 
 

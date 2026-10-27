@@ -4,10 +4,11 @@
  * Analysis agent explains them and the exploration agents work on the exploratory track only.
  */
 import { api } from "./api.js";
+import { restrictionList } from "./availability.js";
 import { NetworkView } from "./network.js";
 import { renderReports } from "./summary.js";
 import { el, focusEvidence } from "./util.js";
-import { SOURCE_NAMES, renderTrace, sourcesChecked } from "./workflow.js";
+import { SOURCE_NAMES, cacheNotice, renderTrace, sourcesChecked } from "./workflow.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -23,7 +24,8 @@ export const VCF_STAGES = [
 ];
 const AGENT_ROLES = ["literature", "biology", "hypothesis"];
 const AGENT_LABELS = { literature: "Literature", biology: "Biological interpretation", hypothesis: "Hypotheses" };
-const VCF_SOURCES = { civic: "CIViC", oncokb: "OncoKB", vep: "Ensembl VEP", ...SOURCE_NAMES };
+const VCF_SOURCES = { civic: "CIViC", oncokb: "OncoKB", vep: "Ensembl VEP", medcpt: "MedCPT re-ranking",
+  pubtator_abstracts: "PubTator abstracts", ...SOURCE_NAMES };
 const SOURCE_STATES = { ok: "✓", error: "✗ failed", skipped: "not run", disabled: "not enabled" };
 const DROP_STAGES = { qc: "QC", germline: "Germline", consequence: "Consequence" };
 
@@ -39,6 +41,21 @@ function refLink(eid) {
 
 function refs(eids, max = 6) {
   return [eids.slice(0, max).map((eid, i) => [i ? ", " : "", refLink(eid)]), eids.length > max ? ` +${eids.length - max}` : ""];
+}
+
+/** PubTator papers ({pmid, item_id}) as direct PubMed links; the VCF view has no literature list to scroll to. */
+function paperLinks(papers, max = 3) {
+  return [papers.slice(0, max).map((p, i) => [i ? ", " : "", el("a", {
+    href: `https://pubmed.ncbi.nlm.nih.gov/${p.pmid}/`, target: "_blank", rel: "noopener",
+    title: [p.title, p.score != null ? `relevance ${p.score}` : ""].filter(Boolean).join(" · "),
+  }, `PMID ${p.pmid}`)]), papers.length > max ? ` +${papers.length - max}` : ""];
+}
+
+/** "3 PMIDs", linked to a PubMed search for them. */
+function pmidSearch(pmids) {
+  return el("a", { href: `https://pubmed.ncbi.nlm.nih.gov/?term=${pmids.slice(0, 20).join("+OR+")}`,
+    target: "_blank", rel: "noopener", title: pmids.slice(0, 20).join(", ") },
+  `${pmids.length} PMID${pmids.length > 1 ? "s" : ""}`);
 }
 
 const pct = (x) => (x == null ? "–" : `${Math.round(x * 1000) / 10}%`);
@@ -127,7 +144,9 @@ function setMode(mode) {
     b.classList.toggle("active", b.dataset.mode === mode);
     b.setAttribute("aria-selected", String(b.dataset.mode === mode));
   });
-  document.querySelectorAll("[data-mode-pane]").forEach((p) => p.classList.toggle("hidden", p.dataset.modePane !== mode));
+  document.querySelectorAll("[data-mode-pane]").forEach((p) =>
+    p.classList.toggle("hidden", !p.dataset.modePane.split(" ").includes(mode)));
+  document.dispatchEvent(new CustomEvent("mode:change", { detail: mode })); // gene / drug share the search form
 }
 
 function source() {
@@ -165,6 +184,7 @@ export function renderVcfQuery(query) {
   setMode("vcf");
   renderHeader(query, evidence);
   renderTrace($("vcf-trace"), withAgentTrace(query), VCF_STAGES);
+  $("vcf-trace").append(cacheNotice(evidence));
   renderVerdict(evidence);
   renderReports($("vcf-reports"), query, { title: "Analysis agent" });
   document.querySelector("#vcf-sec-overview .ask").classList.toggle("hidden", evidence.outcome?.status !== "found");
@@ -237,10 +257,15 @@ function levelBadge(c) {
   return parts;
 }
 
+const MARKETED_TITLE = "ChEMBL max phase 4: approved by at least one regulator (mostly FDA/EMA) for at least one "
+  + "indication. Not necessarily for this cancer, and not a TGA check.";
+const PBS_TITLE = "Matched by drug name on the current PBS Schedule. The restrictions are shown as published; "
+  + "whether this patient meets them is not checked.";
+
 function candidateTable(rows, availability) {
   const pbs = new Map((availability || []).map((a) => [a.drug.toUpperCase(), a]));
   return el("div", { class: "table-wrap" }, el("table", { class: "cand-table" },
-    el("thead", {}, el("tr", {}, ["#", "Drug", "Target variant(s)", "Evidence", "Score", "Rationale", "Approved / PBS", "Refs"]
+    el("thead", {}, el("tr", {}, ["#", "Drug", "Target variant(s)", "Evidence", "Score", "Rationale", "Marketed / PBS", "Refs"]
       .map((h) => el("th", {}, h)))),
     el("tbody", {}, rows.map((c) => {
       const listing = pbs.get(c.drug.split(" + ")[0].toUpperCase());
@@ -256,11 +281,13 @@ function candidateTable(rows, availability) {
           (c.co_occurrence || []).map((n) => el("div", { class: "note-co" }, `↔ ${n}`)),
           (c.resistance_notes || []).slice(0, 3).map((n) => el("div", { class: "note-resist" }, `⚠ ${n}`)),
           (c.conflicts || []).map((n) => el("div", { class: "report-warning" }, `⚠ ${n}`)),
-          (c.literature || []).length ? el("div", { class: "muted" }, "Literature: ", refs(c.literature.map((p) => p.item_id), 3)) : ""),
-        el("td", { class: "small" }, c.approved ? "Approved" : el("span", { class: "muted" }, "–"),
-          listing ? el("div", {}, listing.pbs_listed ? "PBS listed" : el("span", { class: "muted" }, "Not on PBS")) : ""),
+          (c.literature || []).length ? el("div", { class: "muted" }, "Literature: ", paperLinks(c.literature)) : ""),
+        el("td", { class: "small" }, c.approved ? el("span", { title: MARKETED_TITLE }, "Marketed (ChEMBL phase 4)")
+          : el("span", { class: "muted" }, "–"),
+          listing ? el("div", {}, listing.pbs_listed ? [el("span", { title: PBS_TITLE }, "PBS listed"),
+            restrictionList(listing.restrictions)] : el("span", { class: "muted" }, "Not on PBS")) : ""),
         el("td", { class: "small" }, refs(c.evidence_ids, 4),
-          c.pmids?.length ? el("div", { class: "muted" }, `${c.pmids.length} PMID${c.pmids.length > 1 ? "s" : ""}`) : ""));
+          c.pmids?.length ? el("div", { class: "muted" }, pmidSearch(c.pmids)) : ""));
     }))));
 }
 
@@ -298,7 +325,7 @@ function scoreTable(rows) {
         el("td", {}, `${t.B} `, el("span", { class: "muted small" }, bParts.join(", ") || "none")),
         el("td", {}, el("span", { class: "score" }, t.S), el("div", { class: "formula muted" },
           `${t.weights.F}·F + ${t.weights.R}·R + ${t.weights.B}·B`)),
-        el("td", { class: "small" }, (v.literature || []).length ? refs(v.literature.map((p) => p.item_id), 3) : el("span", { class: "muted" }, "–")));
+        el("td", { class: "small" }, (v.literature || []).length ? paperLinks(v.literature) : el("span", { class: "muted" }, "–")));
     }))));
 }
 
@@ -359,6 +386,22 @@ function filterableTable(rows, header, rowFn) {
     el("thead", {}, el("tr", {}, header.map((h) => el("th", {}, h)))), body))];
 }
 
+/** The papers retrieved for the Literature agent, best first, with the abstract sentences it was given. */
+function literatureList(items) {
+  const papers = items.filter((i) => i.kind === "publication").sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  if (!papers.length) return el("p", { class: "muted" }, "None: no Tier 3 variant or level C–E pair, or nothing relevant found.");
+  const ranker = papers[0].ranker === "MedCPT" ? "MedCPT Cross-Encoder" : "keyword score";
+  return [el("p", { class: "muted small" }, `PubTator hits that name the gene (and the drug), re-ranked by ${ranker}; `
+      + "the sentences are what the Literature agent read."),
+    el("ol", { class: "papers" }, papers.map((p) => el("li", { class: "ev-row", "data-eid": p.id },
+      el("a", { href: p.url, target: "_blank", rel: "noopener", class: "paper-title" }, p.title),
+      el("div", { class: "muted small" }, [p.journal, p.year, `PMID ${p.pmid}`, `relevance ${p.score}`]
+        .filter(Boolean).join(" · "), " ", refLink(p.id)),
+      p.passages?.length
+        ? el("ul", { class: "passages small" }, p.passages.map((s) => el("li", {}, el("span", { class: "muted" }, `S${s.n} `), s.text)))
+        : el("p", { class: "muted small" }, "No abstract available: ranked on the title only."))))];
+}
+
 function renderAppendix(evidence) {
   const v = evidence.variants || {};
   const counts = v.counts || {};
@@ -382,6 +425,8 @@ function renderAppendix(evidence) {
         el("td", {}, DROP_STAGES[r.dropped_at] || r.dropped_at), el("td", {}, r.gene ? `${r.gene} ${r.protein_change || ""}` : "–"),
         el("td", {}, where(r)), el("td", {}, r.depth != null ? `${r.alt_reads}/${r.depth} (${pct(r.vaf)})` : "–"),
         el("td", { class: "small" }, r.reason)))),
+    el("details", {}, el("summary", {}, `Retrieved literature (${(evidence.items || []).filter((i) => i.kind === "publication").length})`),
+      literatureList(evidence.items || [])),
     el("details", {}, el("summary", {}, `Full established list (${tracks.established?.length || 0})`),
       tracks.established?.length ? candidateTable(tracks.established, evidence.australian_availability) : el("p", { class: "muted" }, "None.")),
     el("details", {}, el("summary", {}, `Full exploratory list (${tracks.exploratory?.length || 0})`),

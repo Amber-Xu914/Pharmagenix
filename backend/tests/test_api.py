@@ -82,3 +82,28 @@ def test_feedback(client, fake_sources):
     assert resp.get_json()["report"]["avg_rating"] == 4
     assert client.post(f"/api/reports/{report_id}/feedback", json={"rating": 9}).status_code == 400
 
+
+
+def test_explore_a_drug(client, fake_sources, monkeypatch):
+    import app.services.explorer as explorer
+    from app.models import PromptLog
+
+    patched, seen = explorer.collect_evidence, {}
+
+    def recording(name, relation_types, resolved=None, entity_type="gene"):
+        seen["args"] = (name, entity_type)
+        return patched(name, relation_types, resolved, entity_type)
+
+    monkeypatch.setattr(explorer, "collect_evidence", recording)
+    data = client.post("/api/explore", json={"entity_type": "drug", "drug": "clopidogrel"}).get_json()
+    assert seen["args"] == ("clopidogrel", "drug")
+    assert (data["entities"], data["entity_type"]) == (["clopidogrel"], "drug")
+    prompt = PromptLog.query.order_by(PromptLog.id.desc()).first().user_prompt
+    assert prompt.startswith("Drug: clopidogrel") and "## Genes that interact with clopidogrel" in prompt
+    # a follow-up keeps the entity type
+    follow = client.post(f"/api/queries/{data['id']}/ask", json={"followup_question": "Which genes matter most?"})
+    assert follow.get_json()["entity_type"] == "drug"
+
+
+def test_explore_rejects_unknown_entity_type(client):
+    assert client.post("/api/explore", json={"entity_type": "protein", "protein": "x"}).status_code == 400

@@ -450,3 +450,41 @@ class PbsItem(db.Model):
     route = db.Column(db.String(64))
     schedule_code = db.Column(db.Integer)
     effective_date = db.Column(db.Date)
+
+
+class PbsRestriction(db.Model):
+    """A PBS restriction (indication and criteria), shared by the items it applies to. Text kept as published."""
+
+    __tablename__ = "pbs_restrictions"
+
+    res_code = db.Column(db.String(32), primary_key=True)
+    treatment_phase = db.Column(db.String(255))
+    authority_method = db.Column(db.String(64))  # e.g. STREAMLINED, AUTHORITY_REQUIRED
+    html_text = db.Column(LongText)
+    schedule_code = db.Column(db.Integer)
+
+
+class PbsItemRestriction(db.Model):
+    """Which restrictions apply to which PBS item code."""
+
+    __tablename__ = "pbs_item_restrictions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    pbs_code = db.Column(db.String(16), nullable=False, index=True)
+    res_code = db.Column(db.String(32), nullable=False, index=True)
+    benefit_type_code = db.Column(db.String(4))
+
+
+# ---------- Pathways ----------
+
+class GenePathway(db.Model):
+    """Core oncogenic signalling pathway membership (TCGA PanCancer, Sanchez-Vega et al., Cell 2018; the curated
+    subset in services/variants/biology.py). Seeded by init-db / upgrade-db; used for the Tier 3 B score."""
+
+    __tablename__ = "gene_pathways"
+    __table_args__ = (db.UniqueConstraint("pathway", "gene_symbol", name="uq_gene_pathway"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    pathway = db.Column(db.String(64), nullable=False, index=True)
+    gene_symbol = db.Column(db.String(64), nullable=False, index=True)
+    source = db.Column(db.String(255), nullable=False)

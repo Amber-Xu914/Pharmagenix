@@ -1,5 +1,7 @@
 from flask import Blueprint, jsonify, request
 
+from ..accounts import current_user
+from ..errors import APIError
 from ..extensions import db
 from ..models import Query, iso
 from ..reference.lookup import entity_details, latest_releases
@@ -33,22 +35,40 @@ def meta():
 
 @bp.post("/explore")
 def explore():
+    """{"gene": "CYP2C19"} (gene -> drugs) or {"entity_type": "drug", "drug": "clopidogrel"} (drug -> genes)."""
     body = request.get_json(silent=True) or {}
+    entity_type = body.get("entity_type") or "gene"
     query = run_exploration(
-        gene=body.get("gene"),
-        relation_types=body.get("relation_types"),
+        body.get(entity_type) if entity_type in ("gene", "drug") else None,
+        body.get("relation_types"),
         compare=bool(body.get("compare")),
         followup_question=body.get("followup_question"),
         confirm_unresolved=bool(body.get("confirm_unresolved")),
+        entity_type=entity_type,
     )
     return _query_response(query, 201)
 
 
 @bp.get("/queries")
 def list_queries():
+    """Recent queries; ?mine=1 limits them to the logged-in user's own (the query history page)."""
     limit = min(request.args.get("limit", 20, type=int), 100)
-    queries = Query.query.order_by(Query.id.desc()).limit(limit).all()
-    return jsonify([q.to_dict(include_evidence=False) for q in queries])
+    stmt = db.select(Query).order_by(Query.id.desc()).limit(limit)
+    if request.args.get("mine"):
+        user = current_user()
+        if not user:
+            raise APIError("Log in to see your query history", 401)
+        stmt = stmt.where(Query.user_id == user.id)
+    queries = db.session.scalars(stmt).all()
+    return jsonify([_summary(q) for q in queries])
+
+
+def _summary(query):
+    data = query.to_dict(include_evidence=False)
+    inp = (query.evidence or {}).get("input") or {}
+    data["cancer_type"] = (inp.get("cancer_type") or {}).get("code")
+    data["n_interactions"] = len(query.interactions)
+    return data
 
 
 @bp.get("/queries/<int:query_id>")
@@ -65,10 +85,11 @@ def ask_again(query_id):
         query = run_vcf_followup(parent, body.get("followup_question"), bool(body.get("compare")))
         return _query_response(query, 201)
     query = run_exploration(
-        gene=body.get("gene") or parent.entities[0],
-        relation_types=body.get("relation_types") or parent.relation_types,
+        parent.entities[0],
+        body.get("relation_types") or parent.relation_types,
         compare=bool(body.get("compare")),
         followup_question=body.get("followup_question"),
         parent=parent,
+        entity_type=parent.entity_type if parent.entity_type in ("gene", "drug") else "gene",
     )
     return _query_response(query, 201)

@@ -12,9 +12,12 @@ from pathlib import Path
 from flask import current_app
 
 from .. import tracking
+from ..accounts import current_user_id
 from ..errors import APIError
+from ..http_cache import replayed_hosts
 from ..extensions import db
 from ..models import Query
+from .interactions import record_interactions
 from .llm.report_generator import generate_reports
 from .variants.cancer_types import resolve_cancer_type
 from .variants.parse import parse_upload
@@ -65,11 +68,13 @@ def run_vcf_exploration(variants, info, cancer_type, compare=False):
     label = info.get("example") or info.get("filename") or info.get("tumour_sample") or "uploaded sample"
     with tracking.track_search("vcf", label, {"sample": label, "cancer_type": cancer["code"],
                                               "variants": len(variants), "format": info.get("format")}) as handle:
-        query = Query(entities=[label], entity_type="vcf", relation_types=[], status="pending")
+        query = Query(user_id=current_user_id(), entities=[label], entity_type="vcf", relation_types=[],
+                      status="pending")
         db.session.add(query)
         db.session.commit()  # persist early so even a crash is visible in the admin panel
         try:
-            query.evidence = run_pipeline(variants, info, cancer)
+            query.evidence = {**run_pipeline(variants, info, cancer), "cached_sources": replayed_hosts()}
+            record_interactions(query)
             db.session.commit()
             if query.evidence["outcome"]["status"] == "found":  # nothing tiered: no LLM, no drug claims
                 _report(query, compare)
@@ -92,9 +97,11 @@ def run_vcf_followup(parent, followup_question=None, compare=False):
         raise APIError("This query has no stored evidence to reuse; upload the file again")
     with tracking.track_search("vcf", f"{parent.entities[0]} (follow-up)",
                                {"parent_query_id": parent.id, "followup": followup_question}) as handle:
-        query = Query(parent_id=parent.id, entities=parent.entities, entity_type="vcf", relation_types=[],
+        query = Query(parent_id=parent.id, user_id=current_user_id(), entities=parent.entities, entity_type="vcf",
+                      relation_types=[],
                       followup_question=(followup_question or "").strip() or None, status="pending",
                       evidence=parent.evidence)
+        record_interactions(query)
         db.session.add(query)
         db.session.commit()
         if query.evidence["outcome"]["status"] == "found":

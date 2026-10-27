@@ -185,7 +185,8 @@ function evidenceBadges(row, item) {
   if (row.level) badges.push(el("span", { class: "ev-badge", title: "CPIC / PharmGKB level, ChEMBL clinical phase" }, row.level));
   else if (item.kind === "mechanism") badges.push(el("span", { class: "ev-badge curated" }, "ChEMBL curated"));
   if (row.score != null && row.score > 0) badges.push(el("span", { class: "ev-badge", title: "DGIdb interaction score" }, `DGIdb ${row.score}`));
-  if (row.drug_approved || item.drug_approved || phaseOf(row) >= 4) badges.push(el("span", { class: "ev-badge approved" }, "Approved"));
+  if (row.drug_approved || item.drug_approved || phaseOf(row) >= 4) badges.push(el("span", { class: "ev-badge approved",
+    title: "Approved for at least one indication (DGIdb / ChEMBL max phase 4); not necessarily for this gene or disease" }, "Approved"));
   if (row.conflicts.length) badges.push(el("span", { class: "ev-badge conflict", title: row.conflicts.join(" ") }, "⚠ Conflicting"));
   return badges;
 }

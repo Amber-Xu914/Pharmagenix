@@ -18,6 +18,7 @@ from app.reference.models import (
 from app.services.variants.cancer_types import disease_match, resolve_cancer_type
 from app.services.variants.matching import match_profile
 from app.services.variants.oncokb import from_oncokb
+from app.services.variants.cancer_types import oncokb_in_subtype
 from app.services.variants.parse import parse_maf, parse_upload, parse_vcf, short_protein
 from app.services.vcf_explorer import load_example, mock_examples
 
@@ -122,6 +123,9 @@ def stub_live(monkeypatch):
          "pmids": [], "drug_approved": True}])
     monkeypatch.setattr("app.services.biomed.pubtator.PubTatorClient.search", lambda self, text, limit=5: [
         {"pmid": 111, "title": f"Paper about {text}", "journal": "J", "year": "2024", "authors": [], "query": text}])
+    monkeypatch.setattr("app.services.biomed.pubtator.PubTatorClient.abstracts", lambda self, pmids: {
+        111: {"title": "Paper", "abstract": "We studied tumour samples from many patients. Mutant lung cancer cells "
+              "responded to the inhibitor in this study.", "gene_ids": set(), "chemicals": set()}})
     return calls
 
 
@@ -212,6 +216,20 @@ def test_oncokb_parsing():
     rows = from_oncokb(data, "EGFR", "T790M")
     assert [(r["drug"], r["significance"]) for r in rows] == [("Osimertinib", "Sensitivity/Response"),
                                                               ("Gefitinib", "Resistance")]
+
+
+def test_oncokb_cancer_type_matching(app, vcf_reference):
+    # OncoKB attaches most lung levels to the main type: empty code and name, only mainType.name is set.
+    main_type = {"drugs": [{"drugName": "Osimertinib"}], "level": "LEVEL_1",
+                 "levelAssociatedCancerType": {"code": "", "name": "", "mainType": {"name": "Non-Small Cell Lung Cancer"}}}
+    by_code = {"drugs": [{"drugName": "X"}], "level": "LEVEL_1", "levelAssociatedCancerType": {"code": "LUSC"}}
+    melanoma = {"drugs": [{"drugName": "Y"}], "level": "LEVEL_1",
+                "levelAssociatedCancerType": {"code": "", "mainType": {"name": "Melanoma"}}}
+    rows = from_oncokb({"treatments": [main_type, by_code, melanoma]}, "EGFR", "L858R")
+    luad, lusc, sclc = (resolve_cancer_type(c) for c in ("LUAD", "LUSC", "SCLC"))
+    assert [oncokb_in_subtype(r, luad) for r in rows] == [True, False, False]
+    assert [oncokb_in_subtype(r, lusc) for r in rows] == [True, True, False]
+    assert not oncokb_in_subtype(rows[0], sclc)
 
 
 # ---------- the deterministic tools on the mock VCFs ----------
@@ -385,3 +403,16 @@ def test_vcf_options_and_example_download(client):
     resp = client.get(f"/api/vcf/examples/{data['examples'][0]['id']}")
     assert resp.status_code == 200 and resp.data.startswith(b"##fileformat=VCF")
     assert client.get("/api/vcf/examples/nope").status_code == 400
+
+
+def test_vep_outage_is_a_clear_503(app, vcf_reference, stub_live, monkeypatch):
+    from app.errors import APIError
+
+    def down(self, variants, fill_only=False):
+        raise RuntimeError("503 Server Error: Service Unavailable for url: https://rest.ensembl.org/vep/x")
+
+    monkeypatch.setattr("app.services.variants.vep.VEPClient.annotate", down)
+    with pytest.raises(APIError) as caught:
+        run("mock_luad_egfr_l858r_t790m")
+    assert caught.value.status == 503
+    assert "Ensembl VEP" in caught.value.message and "(503 Service Unavailable)" in caught.value.message

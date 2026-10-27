@@ -99,6 +99,15 @@ export function renderTrace(container, query, stages = STAGES) {
   })));
 }
 
+/** Shown when a live API failed and its answer came from the local store of earlier answers (http_cache.py). */
+export function cacheNotice(evidence) {
+  const hosts = evidence?.cached_sources || [];
+  return hosts.length
+    ? el("p", { class: "report-warning small cache-notice" }, `⚠ ${hosts.join(", ")} did not answer live, so the `
+      + "last stored answer for the same request was used. The result may be slightly out of date.")
+    : "";
+}
+
 // ---------- Stage 4: the verdict ----------
 
 export function sourcesChecked(outcome, labels = SOURCE_NAMES) {
@@ -151,9 +160,28 @@ function geneCard(p) {
       : el("span", { class: "muted" }, "UniProt details unavailable; showing HGNC data.")));
 }
 
+function drugCard(p) {
+  const phase = p.max_phase == null ? null : p.max_phase >= 4 ? "4 (approved)" : String(p.max_phase);
+  return el("article", { class: "profile-card ev-row", "data-eid": p.id },
+    el("header", {},
+      el("span", { class: "type-badge drug" }, "Drug"),
+      el("h3", {}, p.entity),
+      el("span", { class: "muted" }, p.molecule_type || ""),
+      el("span", { class: "spacer" }),
+      refLink(p.id)),
+    el("dl", {},
+      phase ? [el("dt", {}, "Max clinical phase"), el("dd", {}, phase)] : "",
+      p.first_approval ? [el("dt", {}, "First approval"), el("dd", {}, String(p.first_approval))] : "",
+      p.trade_names?.length ? [el("dt", {}, "Trade names"), el("dd", {}, p.trade_names.join(", "))] : "",
+      p.mechanisms?.length ? [el("dt", {}, "Mechanism of action"), el("dd", {}, p.mechanisms.join("; "))] : ""),
+    el("p", { class: "small" }, p.url
+      ? el("a", { href: p.url, target: "_blank", rel: "noopener" }, `ChEMBL ${p.chembl_id} ↗`)
+      : el("span", { class: "muted" }, "Not found in ChEMBL: searched as typed.")));
+}
+
 export function renderProfiles(container, items) {
   const profiles = items.filter((i) => i.kind === "profile");
   container.replaceChildren(profiles.length
-    ? el("div", { class: "profile-grid" }, profiles.filter((p) => p.entity_type === "gene").map(geneCard))
+    ? el("div", { class: "profile-grid" }, profiles.map((p) => (p.entity_type === "drug" ? drugCard(p) : geneCard(p))))
     : el("p", { class: "muted" }, "No profile available (this query was run before profiles were added)."));
 }

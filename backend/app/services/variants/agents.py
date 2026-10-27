@@ -1,6 +1,7 @@
 """Workflow 4, stage 6: exploration agents (LLM) that work on the exploratory track only.
 
-  Literature agent              what the PubMed / PubTator hits say about Tier 3 variants and level 3–4 (C–E) pairs
+  Literature agent              what the retrieved papers (literature.py: PubTator, gated and re-ranked, with the
+                                abstract sentences that answer the query) say about Tier 3 variants and C–E pairs
   Biological interpretation     pathway and co-mutation context (e.g. STK11 + KRAS, TP53 + RB1)
   Hypothesis agent              testable variant–drug hypotheses for follow-up
 
@@ -34,7 +35,9 @@ RULES = """Rules:
 TASKS = {
     "literature": """You are the Literature agent. For each Tier 3 variant and each level C–E variant–drug pair below, say
 what the retrieved papers report and how strongly they support it (supports / only mentions it / not relevant).
-Say plainly when no paper was found.""",
+Each paper comes with the abstract sentences that best match the question, labelled (S1), (S2)...: base what you
+say on those sentences, not on the title, and cite the paper's ID with the sentence, e.g. [E12] (S3). If the
+sentences do not address the variant or drug, say the paper only mentions it. Say plainly when no paper was found.""",
     "biology": """You are the Biological interpretation agent. Explain the pathway and co-mutation context of the tiered
 variants: which oncogenic pathways they hit, and what the co-occurring alterations (e.g. STK11 + KRAS, TP53 + RB1)
 may mean for biology and for the exploratory drugs. Use the pathway and co-mutation facts given.""",

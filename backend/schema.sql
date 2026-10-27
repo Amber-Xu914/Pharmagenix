@@ -3,6 +3,47 @@
 CREATE DATABASE IF NOT EXISTS dgi_explorer CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 USE dgi_explorer;
 
+CREATE TABLE cancer_hotspots (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	gene_symbol VARCHAR(64) NOT NULL, 
+	residue VARCHAR(32) NOT NULL, 
+	start INTEGER NOT NULL, 
+	end INTEGER NOT NULL, 
+	hotspot_type VARCHAR(32), 
+	tumor_count INTEGER, 
+	variant_amino_acids JSON, 
+	PRIMARY KEY (id)
+);
+
+CREATE INDEX ix_cancer_hotspots_gene_symbol ON cancer_hotspots (gene_symbol);
+
+CREATE TABLE civic_evidence (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	evidence_id INTEGER NOT NULL, 
+	gene_symbol VARCHAR(64) NOT NULL, 
+	molecular_profile VARCHAR(500) NOT NULL, 
+	molecular_profile_id INTEGER, 
+	components JSON, 
+	disease VARCHAR(255), 
+	doid VARCHAR(20), 
+	therapies JSON, 
+	therapy_interaction VARCHAR(32), 
+	direction VARCHAR(16), 
+	level VARCHAR(1), 
+	significance VARCHAR(32), 
+	statement TEXT, 
+	pmid INTEGER, 
+	citation VARCHAR(255), 
+	rating INTEGER, 
+	variant_origin VARCHAR(32), 
+	url VARCHAR(255), 
+	PRIMARY KEY (id)
+);
+
+CREATE INDEX ix_civic_evidence_doid ON civic_evidence (doid);
+CREATE INDEX ix_civic_evidence_evidence_id ON civic_evidence (evidence_id);
+CREATE INDEX ix_civic_evidence_gene_symbol ON civic_evidence (gene_symbol);
+
 CREATE TABLE clinpgx_drug_labels (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
 	label_id VARCHAR(20) NOT NULL, 
@@ -255,6 +296,18 @@ CREATE INDEX ix_fda_pgx_biomarkers_chembl_id ON fda_pgx_biomarkers (chembl_id);
 CREATE INDEX ix_fda_pgx_biomarkers_drug_name_norm ON fda_pgx_biomarkers (drug_name_norm);
 CREATE INDEX ix_fda_pgx_biomarkers_gene_symbol ON fda_pgx_biomarkers (gene_symbol);
 
+CREATE TABLE gene_pathways (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	pathway VARCHAR(64) NOT NULL, 
+	gene_symbol VARCHAR(64) NOT NULL, 
+	source VARCHAR(255) NOT NULL, 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_gene_pathway UNIQUE (pathway, gene_symbol)
+);
+
+CREATE INDEX ix_gene_pathways_gene_symbol ON gene_pathways (gene_symbol);
+CREATE INDEX ix_gene_pathways_pathway ON gene_pathways (pathway);
+
 CREATE TABLE genes (
 	hgnc_id VARCHAR(20) NOT NULL, 
 	symbol VARCHAR(64) NOT NULL, 
@@ -271,6 +324,44 @@ CREATE TABLE genes (
 CREATE INDEX ix_genes_ensembl_gene_id ON genes (ensembl_gene_id);
 CREATE INDEX ix_genes_entrez_id ON genes (entrez_id);
 CREATE INDEX ix_genes_symbol ON genes (symbol);
+
+CREATE TABLE intogen_drivers (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	gene_symbol VARCHAR(64) NOT NULL, 
+	cancer_type VARCHAR(32) NOT NULL, 
+	cohort VARCHAR(100) NOT NULL, 
+	`role` VARCHAR(16), 
+	samples INTEGER, 
+	pct_samples FLOAT, 
+	qvalue FLOAT, 
+	PRIMARY KEY (id)
+);
+
+CREATE INDEX ix_intogen_drivers_cancer_type ON intogen_drivers (cancer_type);
+CREATE INDEX ix_intogen_drivers_gene_symbol ON intogen_drivers (gene_symbol);
+
+CREATE TABLE oncotree_types (
+	code VARCHAR(20) NOT NULL, 
+	name VARCHAR(255) NOT NULL, 
+	main_type VARCHAR(255), 
+	tissue VARCHAR(100), 
+	parent VARCHAR(20), 
+	level INTEGER, 
+	PRIMARY KEY (code)
+);
+
+CREATE INDEX ix_oncotree_types_tissue ON oncotree_types (tissue);
+
+CREATE TABLE pbs_item_restrictions (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	pbs_code VARCHAR(16) NOT NULL, 
+	res_code VARCHAR(32) NOT NULL, 
+	benefit_type_code VARCHAR(4), 
+	PRIMARY KEY (id)
+);
+
+CREATE INDEX ix_pbs_item_restrictions_pbs_code ON pbs_item_restrictions (pbs_code);
+CREATE INDEX ix_pbs_item_restrictions_res_code ON pbs_item_restrictions (res_code);
 
 CREATE TABLE pbs_items (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
@@ -295,6 +386,16 @@ CREATE INDEX ix_pbs_items_chembl_id ON pbs_items (chembl_id);
 CREATE INDEX ix_pbs_items_drug_name_norm ON pbs_items (drug_name_norm);
 CREATE INDEX ix_pbs_items_pbs_code ON pbs_items (pbs_code);
 
+CREATE TABLE pbs_restrictions (
+	res_code VARCHAR(32) NOT NULL, 
+	treatment_phase VARCHAR(255), 
+	authority_method VARCHAR(64), 
+	html_text LONGTEXT, 
+	schedule_code INTEGER, 
+	PRIMARY KEY (res_code)
+);
+
+
 CREATE TABLE prompt_templates (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
 	name VARCHAR(100) NOT NULL, 
@@ -310,24 +411,6 @@ CREATE TABLE prompt_templates (
 
 CREATE INDEX ix_prompt_templates_is_active ON prompt_templates (is_active);
 
-CREATE TABLE queries (
-	id INTEGER NOT NULL AUTO_INCREMENT, 
-	parent_id INTEGER, 
-	entities JSON NOT NULL, 
-	entity_type VARCHAR(16) NOT NULL, 
-	relation_types JSON NOT NULL, 
-	followup_question TEXT, 
-	evidence JSON, 
-	status VARCHAR(16) NOT NULL, 
-	error_message TEXT, 
-	created_at DATETIME NOT NULL, 
-	PRIMARY KEY (id), 
-	FOREIGN KEY(parent_id) REFERENCES queries (id)
-);
-
-CREATE INDEX ix_queries_created_at ON queries (created_at);
-CREATE INDEX ix_queries_parent_id ON queries (parent_id);
-
 CREATE TABLE source_releases (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
 	source VARCHAR(32) NOT NULL, 
@@ -342,10 +425,25 @@ CREATE TABLE source_releases (
 
 CREATE INDEX ix_source_releases_source ON source_releases (source);
 
+CREATE TABLE subtype_gene_frequencies (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	oncotree_code VARCHAR(20) NOT NULL, 
+	study_id VARCHAR(100) NOT NULL, 
+	gene_symbol VARCHAR(64) NOT NULL, 
+	altered INTEGER NOT NULL, 
+	profiled INTEGER NOT NULL, 
+	frequency FLOAT NOT NULL, 
+	PRIMARY KEY (id)
+);
+
+CREATE INDEX ix_subtype_gene_frequencies_gene_symbol ON subtype_gene_frequencies (gene_symbol);
+CREATE INDEX ix_subtype_gene_frequencies_oncotree_code ON subtype_gene_frequencies (oncotree_code);
+
 CREATE TABLE users (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
 	email VARCHAR(254) NOT NULL, 
 	password_hash VARCHAR(255) NOT NULL, 
+	is_admin BOOL NOT NULL DEFAULT false, 
 	created_at DATETIME NOT NULL, 
 	last_login_at DATETIME, 
 	PRIMARY KEY (id), 
@@ -396,6 +494,49 @@ CREATE TABLE gene_aliases (
 CREATE INDEX ix_gene_aliases_alias_norm ON gene_aliases (alias_norm);
 CREATE INDEX ix_gene_aliases_hgnc_id ON gene_aliases (hgnc_id);
 
+CREATE TABLE queries (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	parent_id INTEGER, 
+	user_id INTEGER, 
+	entities JSON NOT NULL, 
+	entity_type VARCHAR(16) NOT NULL, 
+	relation_types JSON NOT NULL, 
+	followup_question TEXT, 
+	evidence JSON, 
+	status VARCHAR(16) NOT NULL, 
+	error_message TEXT, 
+	created_at DATETIME NOT NULL, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(parent_id) REFERENCES queries (id), 
+	FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE SET NULL
+);
+
+CREATE INDEX ix_queries_created_at ON queries (created_at);
+CREATE INDEX ix_queries_parent_id ON queries (parent_id);
+CREATE INDEX ix_queries_user_id ON queries (user_id);
+
+CREATE TABLE query_interactions (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	query_id INTEGER NOT NULL, 
+	evidence_id VARCHAR(16) NOT NULL, 
+	source VARCHAR(32) NOT NULL, 
+	gene_symbol VARCHAR(64) NOT NULL, 
+	hgnc_id VARCHAR(20), 
+	drug_name VARCHAR(255) NOT NULL, 
+	chembl_id VARCHAR(20), 
+	relation VARCHAR(255), 
+	level VARCHAR(16), 
+	score FLOAT, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(query_id) REFERENCES queries (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_query_interactions_chembl_id ON query_interactions (chembl_id);
+CREATE INDEX ix_query_interactions_drug_name ON query_interactions (drug_name);
+CREATE INDEX ix_query_interactions_gene_symbol ON query_interactions (gene_symbol);
+CREATE INDEX ix_query_interactions_hgnc_id ON query_interactions (hgnc_id);
+CREATE INDEX ix_query_interactions_query_id ON query_interactions (query_id);
+
 CREATE TABLE reports (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
 	query_id INTEGER NOT NULL, 
@@ -404,8 +545,6 @@ CREATE TABLE reports (
 	model VARCHAR(100) NOT NULL, 
 	`role` VARCHAR(16) NOT NULL, 
 	content_md LONGTEXT, 
-	citations JSON, 
-	invalid_citations JSON, 
 	status VARCHAR(16) NOT NULL, 
 	error_message TEXT, 
 	latency_ms INTEGER, 
@@ -421,18 +560,39 @@ CREATE INDEX ix_reports_created_at ON reports (created_at);
 CREATE INDEX ix_reports_query_id ON reports (query_id);
 CREATE INDEX ix_reports_status ON reports (status);
 
+CREATE TABLE citations (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	report_id INTEGER NOT NULL, 
+	position SMALLINT NOT NULL, 
+	evidence_id VARCHAR(16) NOT NULL, 
+	valid BOOL NOT NULL, 
+	source VARCHAR(32), 
+	kind VARCHAR(32), 
+	pmid INTEGER, 
+	url VARCHAR(500), 
+	PRIMARY KEY (id), 
+	CONSTRAINT uq_citation_report_evidence UNIQUE (report_id, evidence_id), 
+	FOREIGN KEY(report_id) REFERENCES reports (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_citations_pmid ON citations (pmid);
+CREATE INDEX ix_citations_report_id ON citations (report_id);
+
 CREATE TABLE feedback (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
 	report_id INTEGER NOT NULL, 
+	user_id INTEGER, 
 	rating SMALLINT, 
 	comment TEXT, 
 	suggestion TEXT, 
 	created_at DATETIME NOT NULL, 
 	PRIMARY KEY (id), 
-	FOREIGN KEY(report_id) REFERENCES reports (id)
+	FOREIGN KEY(report_id) REFERENCES reports (id), 
+	FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE SET NULL
 );
 
 CREATE INDEX ix_feedback_report_id ON feedback (report_id);
+CREATE INDEX ix_feedback_user_id ON feedback (user_id);
 
 CREATE TABLE prompt_logs (
 	id INTEGER NOT NULL AUTO_INCREMENT, 

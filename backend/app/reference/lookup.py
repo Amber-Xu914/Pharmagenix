@@ -3,7 +3,7 @@
 import re
 
 from ..extensions import db
-from .models import CpicPair, CpicRecommendation, Drug, DrugMechanism, Gene, PbsItem, SourceRelease
+from .models import CpicPair, CpicRecommendation, Drug, DrugMechanism, Gene, PbsItem, PbsItemRestriction, PbsRestriction, SourceRelease
 from .text import norm, strip_salt
 
 CLASSIFICATION_ORDER = {"Strong": 0, "Moderate": 1, "Optional": 2}
@@ -142,7 +142,8 @@ def cpic_guidelines(genes, drug_names, drug_ids, per_pair=6, limit=30, pairs=())
 
 
 def pbs_availability(drugs):
-    """drugs: [(display name, chembl_id or None)]. Returns listing status for each."""
+    """drugs: [(display name, chembl_id or None)]. Returns listing status for each, with the restrictions
+    (indication and criteria, as published) that apply to its items."""
     out = []
     for name, chembl_id in drugs:
         condition = PbsItem.drug_name_norm == strip_salt(name)
@@ -166,6 +167,31 @@ def pbs_availability(drugs):
             "pbs_listed": bool(items),
             "item_count": len(items),
             "items": list(items.values())[:12],
+            "restrictions": pbs_restrictions(list(items)),
             "effective_date": rows[0].effective_date.isoformat() if rows else None,
         })
     return out
+
+
+def pbs_restrictions(pbs_codes):
+    """The distinct restrictions on these PBS items, each with the item codes it applies to."""
+    if not pbs_codes:
+        return []
+    links = db.session.execute(
+        db.select(PbsItemRestriction, PbsRestriction)
+        .join(PbsRestriction, PbsRestriction.res_code == PbsItemRestriction.res_code)
+        .where(PbsItemRestriction.pbs_code.in_(pbs_codes))
+        .order_by(PbsRestriction.res_code, PbsItemRestriction.pbs_code)).all()
+    out = {}
+    for link, r in links:
+        entry = out.setdefault(r.res_code, {
+            "res_code": r.res_code,
+            "treatment_phase": r.treatment_phase,
+            "authority_method": r.authority_method,
+            "benefit_type": BENEFIT_TYPES.get(link.benefit_type_code, link.benefit_type_code),
+            "html": r.html_text,
+            "pbs_codes": [],
+        })
+        if link.pbs_code not in entry["pbs_codes"]:
+            entry["pbs_codes"].append(link.pbs_code)
+    return list(out.values())

@@ -25,6 +25,7 @@ export const api = {
   vcfExploreExample: (body) => request("POST", "/api/vcf/explore", { body }),
   explore: (body) => request("POST", "/api/explore", { body }),
   getQuery: (id) => request("GET", `/api/queries/${id}`),
+  history: () => request("GET", "/api/queries?mine=1&limit=10"),
   ask: (id, body) => request("POST", `/api/queries/${id}/ask`, { body }),
   feedback: (reportId, body) => request("POST", `/api/reports/${reportId}/feedback`, { body }),
   me: () => request("GET", "/api/auth/me"),

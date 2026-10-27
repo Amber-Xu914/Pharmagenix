@@ -7,7 +7,7 @@ from ..models import PromptTemplate
 from .relations import labels
 
 DEFAULT_TEMPLATE_NAME = "dgi_report"
-DEFAULT_TEMPLATE_VERSION = 3  # v3: single workflow (gene → drug–gene interactions)
+DEFAULT_TEMPLATE_VERSION = 4  # v4: a gene (gene → drugs) or a drug (drug → genes)
 VCF_TEMPLATE_NAME = "vcf_report"  # Workflow 4 (patient VCF); its own active version, edited like the others
 VCF_TEMPLATE_VERSION = 3  # v3: two tracks (established / exploratory) ranked separately; agents separate
 SEEDED_NOTES = "Default template"
@@ -28,7 +28,7 @@ Rules:
 - If evidence is sparse, low-level or conflicting, say so explicitly.
 - This is research support, not clinical advice."""
 
-DEFAULT_USER_TEMPLATE = """Gene: {{ entities | join(", ") }}
+DEFAULT_USER_TEMPLATE = """{{ entity_label }}: {{ entities | join(", ") }}
 Relationship types of interest: {{ relation_labels | join(", ") }}
 {% if followup_question %}
 The user's follow-up question: {{ followup_question }}
@@ -48,15 +48,25 @@ CPIC levels (A > B > C > D)."""
 # Used by the default template through {{ analysis_context }}, and appended to custom templates that don't
 # include it.
 REPORT_INSTRUCTIONS = """Write a report in Markdown with these sections:
+{% if entity_type == "drug" %}
+## Overview
+What the drug is (from its profile: type, approval, mechanism) and the headline: which genes it acts on (targets,
+metabolising enzymes, transporters), and how strongly supported.
+## Genes that interact with {{ entities | join(", ") }}
+Group by relationship type (target inhibition, metabolism, induction, binding…), strongest grade first.
+## Pharmacogenomic (SNP-specific) findings
+Which gene variants change this drug's response, toxicity or dose (CPIC / PharmGKB).
+{% else %}
 ## Overview
 What the gene's product does (from its profile) and the headline: which drugs act on it, and how strongly supported.
 ## Drugs that interact with {{ entities | join(", ") }}
 Group by relationship type (inhibition, induction, binding, metabolism…), strongest grade first.
 ## Pharmacogenomic (SNP-specific) findings
+{% endif %}
 ## Clinical significance
 ## Evidence strength and limitations"""
 
-WORKFLOW_LABEL = "Gene → drug–gene interaction list"
+WORKFLOW_LABEL = "Gene or drug → drug–gene interaction list"
 
 # ---------- Workflow 4: patient VCF + cancer type -> candidate drugs ----------
 
@@ -206,8 +216,13 @@ def format_evidence_item(item):
         return (f"[{item['id']}] DrugBank | {item['drug']} ({item.get('drugbank_id')}) | "
                 f"mechanism: {(item.get('mechanism') or 'n/a')[:600]}")
     if kind == "publication":
-        return (f"[{item['id']}] PubTator literature | PMID {item['pmid']} ({item.get('year') or 'n.d.'}, "
+        line = (f"[{item['id']}] PubTator literature | PMID {item['pmid']} ({item.get('year') or 'n.d.'}, "
                 f"{item.get('journal') or 'n/a'}): {item.get('title')}")
+        if item.get("ranker"):  # Workflow 4: retrieved and re-ranked, with the sentences that answer the query
+            sentences = " ".join(f"(S{p['n']}) {p['text']}" for p in item.get("passages") or [])
+            line += (f" | relevance {item['score']} ({item['ranker']}) | abstract sentences: "
+                     f"{sentences or 'no abstract available'}")
+        return line
     if kind == "profile":
         return format_profile(item)
     if kind == "variant":
@@ -225,6 +240,13 @@ def format_evidence_item(item):
 
 
 def format_profile(item):
+    if item.get("entity_type") == "drug":
+        phase = f"{item['max_phase']:g}" if item.get("max_phase") is not None else "n/a"
+        return (f"[{item['id']}] Drug profile ({item['source']}) | {item['entity']}: {item.get('full_name') or 'n/a'} | "
+                f"type: {item.get('molecule_type') or 'n/a'} | max clinical phase: {phase} (4 = approved) | "
+                f"first approval: {item.get('first_approval') or 'n/a'} | trade names: "
+                f"{', '.join(item.get('trade_names') or []) or 'n/a'} | mechanisms of action: "
+                f"{'; '.join(item.get('mechanisms') or []) or 'n/a'}")
     protein = item.get("protein") or {}
     domains = ", ".join(d["name"] for d in protein.get("domains") or [] if d.get("name")) or "n/a"
     return (f"[{item['id']}] Gene profile ({item['source']}) | {item['entity']}: {item.get('full_name') or 'n/a'} | "
@@ -353,6 +375,7 @@ def render_prompt(template, query, evidence, max_items):
     context = {
         "entities": query.entities,
         "entity_type": query.entity_type,
+        "entity_label": "Drug" if query.entity_type == "drug" else "Gene",
         "relation_types": query.relation_types,
         "relation_labels": labels(query.relation_types) or ["all"],
         "followup_question": query.followup_question,

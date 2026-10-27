@@ -4,6 +4,7 @@ from functools import wraps
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import func
 
+from ..accounts import current_user
 from ..errors import APIError
 from ..extensions import db
 from ..models import Feedback, PromptLog, PromptTemplate, Query, Report
@@ -17,10 +18,13 @@ bp = Blueprint("admin", __name__)
 
 @bp.before_request
 def require_admin():
-    # Simple shared-token auth; replace with real accounts before deploying publicly.
+    """An admin account (users.is_admin, logged in on the explorer) or the shared ADMIN_TOKEN header."""
+    user = current_user()
+    if user and user.is_admin:
+        return
     token = request.headers.get("X-Admin-Token", "")
-    if not hmac.compare_digest(token, current_app.config["ADMIN_TOKEN"]):
-        raise APIError("Invalid admin token", 401)
+    if not token or not hmac.compare_digest(token, current_app.config["ADMIN_TOKEN"]):
+        raise APIError("Admin access needed: log in with an admin account, or enter the admin token", 401)
 
 
 def _page():

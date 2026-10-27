@@ -56,7 +56,7 @@ def fake_sources(monkeypatch):
                "anthropic": "Summary citing [E1, E2]."}
     calls = {"collect": 0}
 
-    def fake_collect(gene, relation_types, resolved=None):
+    def fake_collect(gene, relation_types, resolved=None, entity_type="gene"):
         calls["collect"] += 1
         items = [dict(i) for i in FAKE_EVIDENCE_ITEMS]
         return {"items": items, "table": consolidate_pairs(items), "network": build_network(items, [gene]),

@@ -8,10 +8,28 @@ import { renderReports } from "./summary.js";
 import { DgiTable } from "./table.js";
 import { categoryColor, el } from "./util.js";
 import { initVcf, renderVcfQuery, vcfEvidenceTarget } from "./vcf.js";
-import { renderProfiles, renderResolution, renderTrace, renderVerdict } from "./workflow.js";
+import { cacheNotice, renderProfiles, renderResolution, renderTrace, renderVerdict } from "./workflow.js";
 
 const $ = (id) => document.getElementById(id);
-const state = { meta: null, query: null, view: "table", networkStale: true };
+const state = { meta: null, query: null, view: "table", networkStale: true, entityType: "gene" };
+
+const SEARCH_MODES = {
+  gene: { label: "Gene name", placeholder: "Search a gene, e.g. CYP2C19, BRAF or TPMT",
+    busy: "Resolving the gene, then fetching its profile and drug interactions and generating the report." },
+  drug: { label: "Drug name", placeholder: "Search a drug (generic or brand), e.g. clopidogrel, Plavix or codeine",
+    busy: "Resolving the drug, then fetching its profile and the genes it interacts with and generating the report." },
+};
+
+/** The gene and drug searches share one form: the mode decides the placeholder, examples and request. */
+document.addEventListener("mode:change", ({ detail: mode }) => {
+  if (!SEARCH_MODES[mode]) return;
+  state.entityType = mode;
+  $("search-label").textContent = SEARCH_MODES[mode].label;
+  $("gene").placeholder = SEARCH_MODES[mode].placeholder;
+  $("gene").value = "";
+  document.querySelectorAll("[data-examples]").forEach((box) => box.classList.toggle("hidden", box.dataset.examples !== mode));
+  $("resolution").classList.add("hidden");
+});
 
 const table = new DgiTable({
   table: $("dgi-table"),
@@ -120,9 +138,10 @@ function showQuery(query, { hash = "" } = {}) {
   const alerts = pgxAlerts(evidence.items || []);
   renderTrace($("workflow-trace"), query);
   renderVerdict($("verdict"), query);
+  $("verdict").prepend(cacheNotice(evidence));
   renderReports($("reports"), query, { alerts: () => renderAlerts(alerts) });
 
-  const numbers = headlineNumbers(evidence);
+  const numbers = headlineNumbers(evidence, query.entity_type);
   renderHeader($("entity-header"), { query, gene: queryGene(query), numbers });
   document.querySelectorAll("#section-nav [data-count]").forEach((span) => {
     span.textContent = numbers.counts[span.dataset.count] ?? "";
@@ -136,6 +155,7 @@ function showQuery(query, { hash = "" } = {}) {
   state.networkStale = true;
   if (state.view === "network") renderNetwork();
 
+  $("profile-title").textContent = query.entity_type === "drug" ? "Drug profile" : "Gene profile";
   renderProfiles($("profiles"), items);
   const relations = query.relation_types || [];
   renderPgx($("pgx"), items, { requested: !relations.length || relations.includes("snp") });
@@ -177,7 +197,11 @@ function revealEvidence(eid) {
   } else { // PGx rows, papers and the profile card are .ev-row elements
     target = document.querySelector(`#results .ev-row[data-eid="${CSS.escape(eid)}"]`);
   }
-  if (!target) return;
+  if (!target) { // nothing on the page shows this item (e.g. papers in the VCF view): open its source instead
+    if (item.url) window.open(item.url, "_blank", "noopener");
+    return;
+  }
+  for (let d = target.closest("details"); d; d = d.parentElement?.closest("details")) d.open = true; // folded sections
   document.querySelectorAll("#results .highlight").forEach((n) => n.classList.remove("highlight"));
   if (target !== $("network")) target.classList.add("highlight");
   target.scrollIntoView({ behavior: scrollBehavior(), block: "center" });
@@ -197,14 +221,15 @@ function askToConfirm(problems) {
 }
 
 function search(extra = {}) {
+  const type = state.entityType;
   const body = {
-    gene: $("gene").value,
+    entity_type: type,
+    [type]: $("gene").value,
     relation_types: selectedRelations(),
     compare: $("compare").checked,
     ...extra,
   };
-  withBusy([$("submit-btn")], "Resolving the gene, then fetching its profile and drug interactions and generating the report. This usually takes 20–60 seconds…",
-    () => api.explore(body));
+  withBusy([$("submit-btn")], `${SEARCH_MODES[type].busy} This usually takes 20–60 seconds…`, () => api.explore(body));
 }
 
 $("search-form").addEventListener("submit", (event) => {
@@ -222,7 +247,7 @@ $("ask-form").addEventListener("submit", (event) => {
 
 // Example chips fill in the search box; the user still presses Explore (a query takes 20–60 s and calls the LLMs).
 document.querySelectorAll(".example").forEach((chip) => chip.addEventListener("click", () => {
-  $("gene").value = chip.dataset.gene;
+  $("gene").value = chip.dataset.name;
   $("submit-btn").focus();
 }));
 

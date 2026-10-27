@@ -16,7 +16,7 @@ async function login(token) {
   const candidate = adminApi(token);
   await candidate.stats(); // throws on a wrong token
   admin = candidate;
-  try { sessionStorage.setItem(TOKEN_KEY, token); } catch { /* private mode */ }
+  if (token) try { sessionStorage.setItem(TOKEN_KEY, token); } catch { /* private mode */ }
   $("login-card").classList.add("hidden");
   $("admin-app").classList.remove("hidden");
   showTab("logs");
@@ -225,8 +225,10 @@ async function loadStats() {
 
 // ---------- Boot ----------
 
-const saved = storedToken();
-if (saved) {
+// An admin account already logged in on the explorer needs no token; otherwise try the token from this tab.
+login("").catch(() => {
+  const saved = storedToken();
+  if (!saved) return;
   $("admin-token").value = saved;
   login(saved).catch(() => { /* token expired or changed: stay on the login form */ });
-}
+});

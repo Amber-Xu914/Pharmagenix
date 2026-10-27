@@ -50,6 +50,9 @@
           <!-- Shown when signed in -->
           <div id="user-menu" class="auth-panel hidden">
             <p class="small">Signed in as <strong id="user-email"></strong></p>
+            <p class="small history-head">My recent queries</p>
+            <ol id="history-list" class="history-list small"></ol>
+            <a id="admin-link" class="small hidden" href="/admin">Admin console →</a>
             <button id="logout-btn" class="secondary" type="button">Log out</button>
           </div>
         </div>
@@ -75,24 +78,32 @@
 
         <div class="mode-switch segmented" role="tablist" aria-label="Workflow">
           <button type="button" role="tab" data-mode="gene" class="active" aria-selected="true">🧬 Gene → drugs</button>
+          <button type="button" role="tab" data-mode="drug" aria-selected="false">💊 Drug → genes</button>
           <button type="button" role="tab" data-mode="vcf" aria-selected="false">🧪 Patient VCF → candidate drugs</button>
         </div>
 
-        <form id="search-form" class="search-form" data-mode-pane="gene">
+        <form id="search-form" class="search-form" data-mode-pane="gene drug">
           <div class="searchbar">
             <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
-            <label for="gene" class="visually-hidden">Gene name</label>
+            <label for="gene" id="search-label" class="visually-hidden">Gene name</label>
             <input id="gene" type="text" autocomplete="off" required
                    placeholder="Search a gene, e.g. CYP2C19, BRAF or TPMT">
             <button id="submit-btn" type="submit">Explore</button>
           </div>
 
-          <div class="examples" aria-label="Example searches">
-            <button type="button" class="example" data-gene="CYP2C19">CYP2C19</button>
-            <button type="button" class="example" data-gene="CYP2D6">CYP2D6</button>
-            <button type="button" class="example" data-gene="BRAF">BRAF</button>
-            <button type="button" class="example" data-gene="TPMT">TPMT</button>
-            <button type="button" class="example" data-gene="DPYD">DPYD</button>
+          <div class="examples" aria-label="Example searches" data-examples="gene">
+            <button type="button" class="example" data-name="CYP2C19">CYP2C19</button>
+            <button type="button" class="example" data-name="CYP2D6">CYP2D6</button>
+            <button type="button" class="example" data-name="BRAF">BRAF</button>
+            <button type="button" class="example" data-name="TPMT">TPMT</button>
+            <button type="button" class="example" data-name="DPYD">DPYD</button>
+          </div>
+          <div class="examples hidden" aria-label="Example searches" data-examples="drug">
+            <button type="button" class="example" data-name="clopidogrel">clopidogrel</button>
+            <button type="button" class="example" data-name="Plavix">Plavix</button>
+            <button type="button" class="example" data-name="codeine">codeine</button>
+            <button type="button" class="example" data-name="osimertinib">osimertinib</button>
+            <button type="button" class="example" data-name="warfarin">warfarin</button>
           </div>
 
           <fieldset class="relations">
@@ -186,7 +197,7 @@
     </section>
 
     <section id="sec-profile" class="card section">
-      <div class="section-head"><h2>Gene profile</h2></div>
+      <div class="section-head"><h2 id="profile-title">Gene profile</h2></div>
       <div id="profiles"></div>
     </section>
 

@@ -23,11 +23,14 @@ class Query(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     parent_id = db.Column(db.Integer, db.ForeignKey("queries.id"), nullable=True, index=True)
+    # Who asked (query history); NULL for anonymous searches and command-line runs
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     entities = db.Column(db.JSON, nullable=False)  # [gene]; older queries may hold several names
-    entity_type = db.Column(db.String(16), nullable=False, default="gene")  # gene (older queries: auto | drug)
+    entity_type = db.Column(db.String(16), nullable=False, default="gene")  # gene | drug | vcf
     relation_types = db.Column(db.JSON, nullable=False)
     followup_question = db.Column(db.Text)
-    # Normalised evidence bundle: {items, table, network, source_status, counts}
+    # The full evidence bundle as shown on the results page ({items, table, network, source_status, ...}). Its
+    # drug–gene pairs are also stored relationally in query_interactions, and report citations in citations.
     evidence = db.Column(db.JSON)
     status = db.Column(db.String(16), nullable=False, default="pending")  # pending | complete | failed
     error_message = db.Column(db.Text)
@@ -36,11 +39,16 @@ class Query(db.Model):
     reports = db.relationship(
         "Report", back_populates="query", order_by="Report.id", cascade="all, delete-orphan"
     )
+    interactions = db.relationship(
+        "QueryInteraction", back_populates="query", order_by="QueryInteraction.id", cascade="all, delete-orphan"
+    )
+    user = db.relationship("User", back_populates="queries")
 
     def to_dict(self, include_evidence=True):
         data = {
             "id": self.id,
             "parent_id": self.parent_id,
+            "user_id": self.user_id,
             "entities": self.entities,
             "entity_type": self.entity_type,
             "relation_types": self.relation_types,
@@ -95,8 +103,6 @@ class Report(db.Model):
     model = db.Column(db.String(100), nullable=False)
     role = db.Column(db.String(16), nullable=False, default="primary")  # primary | comparison
     content_md = db.Column(LongText)
-    citations = db.Column(db.JSON)  # evidence IDs cited, in order of first use
-    invalid_citations = db.Column(db.JSON)  # cited IDs that don't exist in the evidence
     # success | flagged (answered but failed a quality check) | failed (no answer)
     status = db.Column(db.String(16), nullable=False, default="pending", index=True)
     error_message = db.Column(db.Text)
@@ -109,6 +115,23 @@ class Report(db.Model):
     template = db.relationship("PromptTemplate")
     feedback = db.relationship("Feedback", back_populates="report", cascade="all, delete-orphan")
     prompt_logs = db.relationship("PromptLog", back_populates="report", cascade="all, delete-orphan")
+    citation_rows = db.relationship("Citation", back_populates="report", order_by="Citation.position",
+                                    cascade="all, delete-orphan")
+
+    @property
+    def citations(self):
+        """Evidence IDs cited (and present in the evidence), in order of first use."""
+        return [c.evidence_id for c in self.citation_rows if c.valid]
+
+    @property
+    def invalid_citations(self):
+        """Cited IDs that were not in the prompt's evidence (a hallucinated reference)."""
+        return [c.evidence_id for c in self.citation_rows if not c.valid]
+
+    def set_citations(self, used, invalid, items):
+        """used: every cited ID in order of first use; items: {evidence ID: evidence item} from the query."""
+        self.citation_rows = [Citation.from_item(i, eid, eid not in invalid, items.get(eid))
+                              for i, eid in enumerate(used, 1)]
 
     def to_dict(self):
         ratings = [f.rating for f in self.feedback if f.rating]
@@ -186,6 +209,7 @@ class Feedback(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     report_id = db.Column(db.Integer, db.ForeignKey("reports.id"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     rating = db.Column(db.SmallInteger)  # 1-5
     comment = db.Column(db.Text)
     suggestion = db.Column(db.Text)
@@ -197,6 +221,7 @@ class Feedback(db.Model):
         return {
             "id": self.id,
             "report_id": self.report_id,
+            "user_id": self.user_id,
             "rating": self.rating,
             "comment": self.comment,
             "suggestion": self.suggestion,
@@ -212,13 +237,72 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(254), nullable=False, unique=True)  # stored lower-cased
     password_hash = db.Column(db.String(255), nullable=False)
+    is_admin = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow)
     last_login_at = db.Column(db.DateTime)
+
+    queries = db.relationship("Query", back_populates="user", passive_deletes=True)
 
     def to_dict(self):
         return {
             "id": self.id,
             "email": self.email,
+            "is_admin": self.is_admin,
             "created_at": iso(self.created_at),
             "last_login_at": iso(self.last_login_at),
         }
+
+
+class Citation(db.Model):
+    """One evidence item cited by a report, in order of first use. valid = the ID was in the prompt's evidence."""
+
+    __tablename__ = "citations"
+    __table_args__ = (db.UniqueConstraint("report_id", "evidence_id", name="uq_citation_report_evidence"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    report_id = db.Column(db.Integer, db.ForeignKey("reports.id", ondelete="CASCADE"), nullable=False, index=True)
+    position = db.Column(db.SmallInteger, nullable=False)
+    evidence_id = db.Column(db.String(16), nullable=False)  # E3, as written in the report
+    valid = db.Column(db.Boolean, nullable=False, default=True)
+    source = db.Column(db.String(32))  # PubTator, CIViC, DGIdb, ChEMBL, CPIC, PharmGKB, ...
+    kind = db.Column(db.String(32))  # publication, civic, interaction, mechanism, guideline, ...
+    pmid = db.Column(db.Integer, index=True)  # the PubMed ID behind it, when it has exactly one
+    url = db.Column(db.String(500))
+
+    report = db.relationship("Report", back_populates="citation_rows")
+
+    @classmethod
+    def from_item(cls, position, evidence_id, valid, item):
+        item = item or {}
+        pmid = item.get("pmid") or (item["pmids"][0] if isinstance(item.get("pmids"), list) and len(item["pmids"]) == 1
+                                    else None)
+        return cls(position=position, evidence_id=evidence_id, valid=valid, source=item.get("source"),
+                   kind=item.get("kind"), pmid=int(pmid) if str(pmid or "").isdigit() else None,
+                   url=(item.get("url") or "")[:500] or None)
+
+
+class QueryInteraction(db.Model):
+    """A drug–gene pair a query found, one row per evidence item: the relational view of the DGI table.
+
+    hgnc_id / chembl_id refer to genes / drugs. They are indexed but not declared as foreign keys, because
+    import-data replaces those reference tables wholesale; the IDs themselves are stable across releases."""
+
+    __tablename__ = "query_interactions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    query_id = db.Column(db.Integer, db.ForeignKey("queries.id", ondelete="CASCADE"), nullable=False, index=True)
+    evidence_id = db.Column(db.String(16), nullable=False)
+    source = db.Column(db.String(32), nullable=False)  # DGIdb, ChEMBL, CPIC, PharmGKB, CIViC, OncoKB
+    gene_symbol = db.Column(db.String(64), nullable=False, index=True)
+    hgnc_id = db.Column(db.String(20), index=True)
+    drug_name = db.Column(db.String(255), nullable=False, index=True)
+    chembl_id = db.Column(db.String(20), index=True)
+    relation = db.Column(db.String(255))  # interaction type, action type or clinical significance
+    level = db.Column(db.String(16))  # CPIC / PharmGKB / CIViC / OncoKB evidence level
+    score = db.Column(db.Float)  # DGIdb interaction score
+
+    query = db.relationship("Query", back_populates="interactions")
+
+    def to_dict(self):
+        return {k: getattr(self, k) for k in ("evidence_id", "source", "gene_symbol", "hgnc_id", "drug_name",
+                                              "chembl_id", "relation", "level", "score")}

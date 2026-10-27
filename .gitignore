@@ -8,3 +8,4 @@ instance/
 mlflow.db
 mlruns/
 mlartifacts/
+http_cache.sqlite

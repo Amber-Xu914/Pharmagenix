@@ -37,11 +37,12 @@ function bestBy(values, order) {
 }
 
 /** Numbers shown in the header and the section nav. Each links to the section that lists them. */
-export function headlineNumbers(evidence) {
+export function headlineNumbers(evidence, entityType = "gene") {
   const rows = interactionRows(evidence.table || []);
   const items = evidence.items || [];
   const availability = evidence.australian_availability;
-  const drugs = new Set(rows.map((r) => upper(r.drug)).filter(Boolean));
+  // A gene search counts the drugs it found; a drug search counts the genes.
+  const partners = new Set(rows.map((r) => upper(entityType === "drug" ? r.gene : r.drug)).filter(Boolean));
   const graded = rows.every((r) => r.evidence_ids); // rows saved before stage 5 grading have no evidence_ids
   const supported = graded ? rows.filter((r) => ["strong", "moderate"].includes(r.grade)).length
     : rows.filter((r) => r.category !== "other").length;
@@ -60,7 +61,8 @@ export function headlineNumbers(evidence) {
       pbs: availability ? listed : null,
     },
     tiles: [
-      { value: drugs.size, label: "Drugs", sub: `${rows.length} interactions`, href: "#sec-interactions" },
+      { value: partners.size, label: entityType === "drug" ? "Genes" : "Drugs", sub: `${rows.length} interactions`,
+        href: "#sec-interactions" },
       graded
         ? { value: supported, label: "Well supported", sub: "strong or moderate evidence", href: "#sec-interactions" }
         : { value: supported, label: "Known action", sub: "inhibit, induce, bind…", href: "#sec-interactions" },
@@ -123,8 +125,24 @@ function geneLinks(name, d) {
   ].filter(Boolean);
 }
 
+function drugLinks(name, d) {
+  return [
+    d?.chembl_id && ["ChEMBL", `https://www.ebi.ac.uk/chembl/compound_report_card/${d.chembl_id}/`],
+    ["DGIdb", `https://dgidb.org/drugs/${encodeURIComponent(name)}`],
+    ["ClinPGx", `https://www.clinpgx.org/search?query=${encodeURIComponent(name)}`],
+  ].filter(Boolean);
+}
+
 function describeGene(gene) {
   const d = gene.details;
+  if (gene.type === "drug") {
+    const phase = d?.max_phase == null ? null : d.max_phase >= 4 ? "Approved (ChEMBL phase 4)" : `Max clinical phase ${d.max_phase}`;
+    return {
+      fullName: d?.full_name && d.full_name.toUpperCase() !== gene.name ? d.full_name : null,
+      meta: [d?.molecule_type, phase, d?.first_approval && `First approved ${d.first_approval}`, gene.id],
+      links: drugLinks(gene.name, d),
+    };
+  }
   if (gene.type !== "gene") return { fullName: null, meta: [], links: [] }; // the note explains why
   const locus = d?.locus_type === "gene with protein product" ? "Protein-coding gene" : d?.locus_type;
   return {
@@ -166,7 +184,7 @@ export function renderHeader(container, { query, gene, numbers }) {
         `Query #${query.id}${query.parent_id ? ` (follow-up to #${query.parent_id})` : ""} · ${formatDate(query.created_at)}`)),
     el("div", { class: "eh-title" },
       el("h2", {}, gene.name),
-      el("span", { class: `type-badge ${gene.type || ""}` }, gene.type ? "Gene" : "Unresolved"),
+      el("span", { class: `type-badge ${gene.type || ""}` }, gene.type === "drug" ? "Drug" : gene.type ? "Gene" : "Unresolved"),
       links.length ? el("div", { class: "eh-links" }, links.map(([label, href]) =>
         el("a", { href, target: "_blank", rel: "noopener" }, `${label} ↗`))) : null),
     fullName ? el("p", { class: "eh-name" }, fullName) : null,

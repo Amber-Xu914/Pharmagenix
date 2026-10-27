@@ -4,6 +4,7 @@ from flask import Blueprint, jsonify, request, session
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from ..accounts import current_user
 from ..errors import APIError
 from ..extensions import db
 from ..models import User, utcnow
@@ -14,11 +15,6 @@ bp = Blueprint("auth", __name__)
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MAX_EMAIL = 254
 MIN_PASSWORD, MAX_PASSWORD = 8, 128
-
-
-def current_user():
-    user_id = session.get("user_id")
-    return db.session.get(User, user_id) if user_id else None
 
 
 def _credentials():

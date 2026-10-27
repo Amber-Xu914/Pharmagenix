@@ -5,7 +5,7 @@ workflow uses CIViC alone. Levels: 1 / 2 standard care, 3A / 3B clinical evidenc
 R1 / R2 resistance.
 """
 
-import requests
+from ...http_cache import cached_session
 
 ESTABLISHED = {"LEVEL_1", "LEVEL_2"}
 RESISTANCE = {"LEVEL_R1", "LEVEL_R2"}
@@ -16,7 +16,7 @@ class OncoKBClient:
         self.base_url = base_url.rstrip("/")
         self.enabled = bool(token)
         self.timeout = timeout
-        self.session = requests.Session()
+        self.session = cached_session()
         self.session.headers.update({"Authorization": f"Bearer {token}", "Accept": "application/json"})
 
     def annotate(self, gene, protein_change, tumour_type):
@@ -39,6 +39,9 @@ def from_oncokb(data, gene, protein_change):
             "gene": gene, "protein_change": protein_change, "drug": " + ".join(drugs), "level": level,
             "significance": "Resistance" if level in RESISTANCE else "Sensitivity/Response",
             "cancer_type": cancer.get("code") or cancer.get("name") or (cancer.get("mainType") or {}).get("name"),
+            # A level belongs to one OncoTree code, or (code empty) to a whole main type such as NSCLC
+            "cancer_code": cancer.get("code") or None,
+            "cancer_main_type": (cancer.get("mainType") or {}).get("name") or None,
             "pmids": [int(p) for p in t.get("pmids") or [] if str(p).isdigit()][:10],
             "oncogenic": data.get("oncogenic"), "mutation_effect": (data.get("mutationEffect") or {}).get("knownEffect"),
         })

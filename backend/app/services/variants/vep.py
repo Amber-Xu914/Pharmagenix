@@ -6,8 +6,7 @@ Public, no key; at most 200 variants per request and 15 requests per second. GRC
 
 import time
 
-import requests
-
+from ...http_cache import cached_session
 from .parse import classify, short_protein
 
 BATCH = 200
@@ -17,7 +16,7 @@ class VEPClient:
     def __init__(self, base_url, timeout=60):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
-        self.session = requests.Session()
+        self.session = cached_session()
         self.session.headers.update({"Content-Type": "application/json", "Accept": "application/json",
                                      "User-Agent": "DGI-Explorer/0.1 (academic project)"})
 

@@ -1,7 +1,7 @@
 # Pharmagenix — a GenAI-powered drug–gene interaction explorer
 
-Enter one gene, pick the relationship types you care about, and the app lists every drug that interacts with it. Or
-upload a tumour's somatic variants (VCF, synthetic test data) with its cancer type to get ranked candidate drugs for its
+Enter one gene, pick the relationship types you care about, and the app lists every drug that interacts with it, or
+enter a drug (generic or brand name) to list the genes it acts on. Or upload a tumour's somatic variants (VCF, synthetic test data) with its cancer type to get ranked candidate drugs for its
 actionable variants (Workflow 4, lung cancer prototype). It combines
 curated reference datasets held in MySQL (HGNC, ChEMBL, CPIC, ClinPGx, DGIdb, the FDA biomarker table and the Australian PBS Schedule) with live evidence from
 DGIdb, PharmGKB (ClinPGx), PubTator3, UniProt and DrugBank. An LLM then writes a narrative report in which every claim
@@ -37,11 +37,19 @@ pip install -r requirements.txt
 cp .env.example .env          # fill in DATABASE_URL (with the password above), API keys, ADMIN_TOKEN
 flask --app run init-db       # create tables and seed the default prompt template
 flask --app run import-data   # load all reference datasets (about 4 minutes; see below)
+flask --app run seed-demo     # sample logins: demo@pharmagenix.test / Demo1234!, admin@pharmagenix.test / Admin1234!
 flask --app run run --debug --host 127.0.0.1 --port 5001  # http://127.0.0.1:5001
 ```
 
-The explorer is at <http://localhost:5001> and the admin console at <http://localhost:5001/admin> (log in with the
-`ADMIN_TOKEN` from `.env`). Flask serves the frontend directly. To host the frontend separately, set
+The explorer is at <http://localhost:5001> and the admin console at <http://localhost:5001/admin> (log in as the
+admin account, or with the `ADMIN_TOKEN` from `.env`).
+
+- **User manual** (sample logins, every workflow, admin console, demo checklist): [docs/USER_MANUAL.md](docs/USER_MANUAL.md)
+- **Database design** (ER diagrams, tables, normalisation, example SQL): [docs/database.md](docs/database.md)
+
+Upgrading a database created by an earlier version: `flask --app run upgrade-db` (adds the new columns and tables,
+moves report citations out of JSON; safe to re-run). Before a demo, `flask --app run warm-cache` stores the live API
+answers for the example searches, so they still work if an API is down (`HTTP_CACHE`, see `app/http_cache.py`). Flask serves the frontend directly. To host the frontend separately, set
 `window.DGI_API_BASE = "http://<backend-host>"` in the page and configure `CORS_ORIGINS`.
 
 Run the tests (in-memory SQLite with fake APIs and LLMs, so no network access or API keys needed):
@@ -70,7 +78,7 @@ local source carries that version.
 | [CIViC](https://civicdb.org/) | Workflow 4: variant-level drug response / resistance evidence, levels A–E; molecular profiles parsed into matchable parts | Nightly predictive evidence summaries | ~2.8k evidence items | CC0 |
 | [cancerhotspots.org](https://www.cancerhotspots.org/) | Workflow 4: Tier 2 known hotspots (replaces COSMIC hotspots, which need a licence) | Single-residue and in-frame indel hotspots, via its API | 1,165 hotspots in 247 genes | See cancerhotspots.org (Chang et al. 2018) |
 | [cBioPortal](https://www.cbioportal.org/) | Workflow 4: gene mutation frequency per lung subtype (Tier 3 R component) | Mutated-gene counts for one reference study per subtype (`CBIOPORTAL_SUBTYPE_STUDIES`) | ~63k gene–subtype rows (LUAD, LUSC, NSCLC, SCLC) | TCGA / study licences; see cbioportal.org |
-| [PBS Schedule](https://www.pbs.gov.au/)     | Whether a drug is PBS-listed in Australia, its item codes, forms and benefit type (shown separately; not DGI evidence and not sent to the LLM)                   | Current month's schedule, via the PBS public API                                        | ~15k item/brand rows                              | © Commonwealth of Australia; redistribution permitted, modification not |
+| [PBS Schedule](https://www.pbs.gov.au/)     | Whether a drug is PBS-listed in Australia, its item codes, forms, benefit type and restriction text (shown separately; not DGI evidence and not sent to the LLM)                   | Current month's schedule and restrictions, via the PBS public API                                       | ~15k item/brand rows, ~3.6k restrictions          | © Commonwealth of Australia; redistribution permitted, modification not |
 
 ```bash
 flask --app run import-data                 # all, in dependency order (HGNC → ChEMBL → CPIC → ClinPGx → DGIdb → FDA → OncoTree → IntOGen → CIViC → hotspots → cBioPortal → PBS)
@@ -103,12 +111,12 @@ Datasets considered but not imported yet:
 
 ## Workflow
 
-There are two workflows, picked with the switch on the search card: **gene → drug–gene interaction list** (below)
-and **patient VCF + cancer type → candidate drugs** (Workflow 4, next section). Each runs six stages, and the
+There are three workflows, picked with the switch on the search card: **gene → drugs** and **drug → genes** (the
+same stages, below) and **patient VCF + cancer type → candidate drugs** (Workflow 4, next section). Each runs six stages, and the
 stage-by-stage trace is shown under the results header.
 
 ```
-Gene name ──► POST /api/explore {gene}                              services/explorer.py runs the stages in order
+Gene or drug ──► POST /api/explore {gene | drug}               services/explorer.py runs the stages in order
                 │
   1 Resolution  ├─ reference/normalise.py + workflow/resolution.py
                 │    P53 → TP53, ENSG… / NCBI Gene ID → symbol (HGNC); one gene per search
@@ -176,7 +184,8 @@ VCF + cancer type ──► POST /api/vcf/explore                    services/vc
                 │                   (exact / codon / exon); class-level drug evidence stays exploratory
                 │      exploratory  levels C–E, other cancer types, DGIdb / ChEMBL-only links, all Tier 3 variants
   6 Agents (LLM)├─ exploratory track only; cannot change QC, tiers or levels (services/variants/agents.py):
-                │      Literature (PubTator search for Tier 3 variants and level C–E pairs) · Biological
+                │      Literature (retrieval-augmented, see below: papers for Tier 3 variants and level C–E pairs,
+                │      with the abstract sentences that answer each question) · Biological
                 │      interpretation (pathways, co-mutations such as STK11 + KRAS, TP53 + RB1) · Hypothesis
                 │    every statement cites an evidence ID or is labelled "Hypothesis"; a check flags violations
   7 Analysis    ├─ each track ranked separately by rules: established by level, subtype match, specificity,
@@ -193,6 +202,31 @@ OncoKB is optional: set `ONCOKB_API_TOKEN` (free for academic use). COSMIC hotsp
 a licence, so cancerhotspots.org and IntOGen gene roles are used instead. R counts every mutation, so large passenger
 genes (TTN, MUC16) score high on R; B is there to offset this. SNVs / indels can't show fusions or copy-number
 changes (ALK, ROS1, RET, MET amplification), which the report lists as a limitation.
+
+### Literature retrieval (RAG) for the Literature agent
+
+`services/variants/literature.py`, run in stage 6 before the agents. For each Tier 3 variant and level C–E pair:
+
+1. **Search**: PubTator3 keyword search, 10 hits (`VCF_LITERATURE_CANDIDATES`).
+2. **Fetch**: titles and abstracts with PubTator's entity annotations (one BioC export request per 100 papers).
+3. **Entity gate**: the paper must name the gene (its NCBI Gene ID annotation or the symbol) and, for a drug
+   question, the drug.
+4. **Re-rank**: [MedCPT](https://github.com/ncbi/MedCPT) Cross-Encoder (NCBI, trained on PubMed search logs). Papers
+   below `VCF_LITERATURE_MIN_SCORE` (0) are dropped: on-topic papers score above 0, off-topic ones around −10. The
+   best 3 per question are kept (`VCF_LITERATURE_PER_QUERY`).
+5. **Passages**: the 2 abstract sentences closest to the question (MedCPT Query / Article Encoders). The Literature
+   agent gets these as `(S1)`, `(S2)` with the paper's evidence ID, and must base what it says on them, not on the title.
+
+Only kept papers count as literature support in the ranking. The appendix lists them with their scores and the
+sentences the agent read. MedCPT is optional and free (it runs locally):
+
+```bash
+pip install -r requirements-rag.txt   # PyTorch + transformers; the models (~1.3 GB) download on first use
+```
+
+Without it, or with `VCF_LITERATURE_RANKER=keyword`, papers and sentences are ranked by gene, variant, drug and
+lung-cancer mentions instead. The first search after a restart loads the models (a few seconds; about 1–2 minutes the
+first time, while they download). Tests always use the keyword ranker.
 
 ## MLflow tracking (optional)
 
@@ -310,11 +344,12 @@ cd backend && .venv/bin/flask --app run mlflow-eval --case mock_luad_kras_g12c
 | Method   | Path                                      | Description                                                                                                           |
 | -------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | GET      | `/api/meta`                               | Relationship types, model info, imported reference data versions                                                      |
-| POST     | `/api/explore`                            | `{gene, relation_types[], compare, confirm_unresolved}`; one gene per search                                          |
+| POST     | `/api/explore`                            | `{gene, relation_types[], compare, confirm_unresolved}`, or `{entity_type: "drug", drug, ...}`; one name per search   |
 | GET      | `/api/vcf/options`                        | Workflow 4 form: lung cancer types (OncoTree), the synthetic mock VCFs, QC thresholds                                 |
 | GET      | `/api/vcf/examples/<id>`                  | Download one mock VCF                                                                                                  |
 | POST     | `/api/vcf/explore`                        | Multipart `file` (VCF / VCF.gz), `cancer_type`, `test_data=1`, `compare`; or JSON `{example, cancer_type, compare}`   |
-| GET      | `/api/queries/<id>`                       | Fetch the full result of a past query, plus `entity_details` (HGNC fields for the results header)                     |
+| GET      | `/api/queries[?mine=1]`                   | Recent queries; `mine=1` = the logged-in user's own history (401 when logged out)                                     |
+| GET      | `/api/queries/<id>`                       | Fetch the full result of a past query, plus `entity_details` (HGNC / ChEMBL fields for the results header)            |
 | POST     | `/api/queries/<id>/ask`                   | Follow-up / re-ask `{followup_question, compare}`; reuses the evidence when the gene and relation types are unchanged  |
 | POST     | `/api/reports/<id>/feedback`              | `{rating 1–5, comment, suggestion}`                                                                                   |
 | POST     | `/api/auth/register`, `/api/auth/login`   | `{email, password}` (email only, case-insensitive); sets a signed session cookie                                      |
@@ -342,10 +377,10 @@ cd backend && .venv/bin/flask --app run mlflow-eval --case mock_luad_kras_g12c
 - **About 90% of DGIdb interactions have no type label**, so "Unspecified" is selected by default. Unticking it
   removes most results.
 - **PBS public API**: the published key for unregistered users is shared by everyone and limited to one request per
-  20 seconds, so the importer only fetches the current month (two requests). Register at
+  20 seconds, so the importer only fetches the current month (four requests: schedule, items, restrictions, item–restriction links). Register at
   <https://data-api-portal.health.gov.au> for your own key (`PBS_SUBSCRIPTION_KEY`). PBS matching is by generic name
-  or ChEMBL ID, so combination products may not be matched, and restriction wording is not imported (the panel links
-  to each item on pbs.gov.au).
+  or ChEMBL ID, so combination products may not be matched. Restriction text is shown as published (the PBS licence
+  does not permit modification); whether a patient meets a restriction is not checked.
 - Requests are synchronous (20–60 s each). Under real load, move `run_exploration` into a Celery/RQ task and have the
   frontend poll.
 - The admin console uses a single shared token. Replace it with real accounts before deploying publicly.

@@ -1,6 +1,7 @@
-"""Stage 2, Gene Profile Retrieval: basic information about the searched gene.
+"""Stage 2, Profile Retrieval: basic information about the searched gene or drug.
 
-HGNC (local) for symbol, aliases and location; UniProt (live) for protein function and domains.
+Gene: HGNC (local) for symbol, aliases and location; UniProt (live) for protein function and domains.
+Drug: ChEMBL (local) for its type, clinical phase, first approval, trade names and mechanisms of action.
 The profile becomes an evidence item (kind "profile"), so the LLM can cite it. The UniProt lookup is best effort:
 a failure is recorded in source_status and the profile keeps its HGNC fields.
 """
@@ -8,7 +9,7 @@ a failure is recorded in source_status and the profile keeps its HGNC fields.
 import logging
 
 from ...extensions import db
-from ...reference.models import Gene, GeneAlias
+from ...reference.models import Drug, DrugMechanism, DrugSynonym, Gene, GeneAlias
 
 logger = logging.getLogger(__name__)
 
@@ -44,3 +45,36 @@ def build_gene_profile(entry, uniprot, status):
         "url": (protein or {}).get("url")
                or (f"https://www.genenames.org/data/gene-symbol-report/#!/hgnc_id/{gene.hgnc_id}" if gene else None),
     }
+
+
+def build_drug_profile(entry):
+    """entry: the stage 1 normalisation entry for the drug (its id is the ChEMBL ID when resolved)."""
+    drug = db.session.get(Drug, entry["id"]) if entry.get("id") else None
+    trade_names, mechanisms = [], []
+    if drug:
+        trade_names = db.session.scalars(db.select(DrugSynonym.synonym).where(
+            DrugSynonym.chembl_id == drug.chembl_id, DrugSynonym.syn_type == "TRADE_NAME")).all()
+        mechanisms = db.session.scalars(db.select(DrugMechanism.mechanism_of_action).where(
+            DrugMechanism.chembl_id == drug.chembl_id)).all()
+    return {
+        "kind": "profile",
+        "entity_type": "drug",
+        "entity": entry["name"],
+        "source": "ChEMBL",
+        "full_name": drug.pref_name if drug else None,
+        "chembl_id": drug.chembl_id if drug else None,
+        "molecule_type": drug.molecule_type if drug else None,
+        "max_phase": drug.max_phase if drug else None,
+        "first_approval": drug.first_approval if drug else None,
+        "trade_names": _brand_names(trade_names, drug.pref_name if drug else entry["name"]),
+        "mechanisms": list(dict.fromkeys(m for m in mechanisms if m))[:8],
+        "url": f"https://www.ebi.ac.uk/chembl/compound_report_card/{drug.chembl_id}/" if drug else None,
+    }
+
+
+def _brand_names(names, generic, limit=12):
+    """Real brand names only: ChEMBL's trade names also list manufacturer generics ("Clopidogrel Apotex") and
+    combination products ("... component of Duoplavin")."""
+    generic = (generic or "").lower()
+    brands = {n for n in names if "component of" not in n.lower() and not n.lower().startswith(generic)}
+    return sorted(brands, key=str.lower)[:limit]

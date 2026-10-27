@@ -57,6 +57,10 @@ class Config:
     DRUGBANK_URL = os.getenv("DRUGBANK_URL", "https://api.drugbank.com/v1")
     DRUGBANK_API_KEY = os.getenv("DRUGBANK_API_KEY", "")
     HTTP_TIMEOUT = float(os.getenv("HTTP_TIMEOUT", "20"))
+    # Local store of live API answers (app/http_cache.py): fallback = live, stored copy when an API fails;
+    # offline = stored copy first (demo without network; fill it with `flask --app run warm-cache`); off.
+    HTTP_CACHE = os.getenv("HTTP_CACHE", "fallback")
+    HTTP_CACHE_PATH = os.getenv("HTTP_CACHE_PATH", os.path.join(BACKEND_DIR, "http_cache.sqlite"))
     # Gene profile (workflow stage 2)
     UNIPROT_URL = os.getenv("UNIPROT_URL", "https://rest.uniprot.org")
     # Workflow 4 (patient VCF): variant annotation and OncoKB (optional; needs a licensed token)
@@ -120,6 +124,14 @@ class Config:
     VCF_TIER3_MIN_SCORE = 0.4         # below: "low priority" list (kept and reported, not deleted)
     # Workflow 4 stages 6–7: the literature search behind the Literature agent, and the report
     VCF_LITERATURE_QUERIES = 8        # PubTator searches for Tier 3 variants and level 3–4 pairs (0 = off)
+    # Retrieval for the Literature agent (services/variants/literature.py): PubTator hits are gated on the gene /
+    # drug, re-ranked, and the best abstract sentences passed on. MedCPT needs requirements-rag.txt.
+    VCF_LITERATURE_RANKER = os.getenv("VCF_LITERATURE_RANKER", "auto")  # auto (MedCPT if installed) | medcpt | keyword
+    VCF_LITERATURE_CANDIDATES = 10    # PubTator hits per query, before re-ranking
+    VCF_LITERATURE_PER_QUERY = 3      # papers kept per query after re-ranking
+    VCF_LITERATURE_SENTENCES = 2      # abstract sentences per paper given to the Literature agent
+    VCF_LITERATURE_MIN_SCORE = 0.0    # MedCPT Cross-Encoder score below which a paper is off-topic (they sit near -10)
+    MEDCPT_DEVICE = os.getenv("MEDCPT_DEVICE", "")  # "" = Apple GPU (mps) when available, else cpu
     VCF_TOP_PER_TRACK = 10            # drugs shown per track; the full lists go to the appendix
     VCF_AGENTS = True                 # run the exploration agents (LLM) on the exploratory track
 
@@ -132,4 +144,7 @@ class TestConfig(Config):
     OPENAI_API_KEY = "test"
     ANTHROPIC_API_KEY = "test"
     PBS_MIN_INTERVAL = 0
+    ONCOKB_API_TOKEN = ""  # no live OncoKB calls from tests, even with a token in .env
+    HTTP_CACHE = "off"  # tests never read or write the response store
+    VCF_LITERATURE_RANKER = "keyword"  # tests never load MedCPT
     MLFLOW_TRACKING_URI = ""  # tests that need MLflow turn it on themselves
