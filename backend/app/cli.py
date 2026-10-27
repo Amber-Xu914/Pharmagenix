@@ -6,6 +6,14 @@ from .extensions import db
 from .reference.importers import IMPORT_ORDER, run_import
 from .reference.lookup import latest_releases
 from .services.prompts import seed_default_template
+from .services.variants.biology import seed_pathways
+
+
+# The example searches offered on the home page (frontend/index.html), warmed by `warm-cache`
+DEMO_GENES = ["CYP2C19", "CYP2D6", "BRAF", "TPMT", "DPYD"]
+DEMO_DRUGS = ["clopidogrel", "Plavix", "codeine", "osimertinib", "warfarin"]
+# Sample logins for markers and demos (docs/USER_MANUAL.md). Local use only: change them before any deployment.
+DEMO_ACCOUNTS = [("demo@pharmagenix.test", "Demo1234!", False), ("admin@pharmagenix.test", "Admin1234!", True)]
 
 
 def register_cli(app):
@@ -16,13 +24,21 @@ def register_cli(app):
         if drop:
             db.drop_all()
         db.create_all()
+        seed_pathways()
         template = seed_default_template()
         click.echo(f"Database ready. Active template: {template.name} v{template.version}")
+
+    @app.cli.command("upgrade-db")
+    def upgrade_db():
+        """Bring an existing database up to date (new columns and tables, data moved out of JSON). Safe to re-run."""
+        from .migrations import upgrade
+
+        upgrade(echo=click.echo)
 
     @app.cli.command("import-data")
     @click.argument("sources", nargs=-1, type=click.Choice(IMPORT_ORDER + ["all"]))
     def import_data(sources):
-        """Import reference datasets: hgnc, chembl, cpic, clinpgx, dgidb, fda, pbs or all (default)."""
+        """Import reference datasets (hgnc, chembl, cpic, clinpgx, dgidb, fda, oncotree, intogen, civic, hotspots, cbioportal, pbs) or all."""
         selected = IMPORT_ORDER if not sources or "all" in sources else [s for s in IMPORT_ORDER if s in sources]
         for source in selected:
             run_import(source, echo=click.echo)
@@ -38,6 +54,46 @@ def register_cli(app):
             else:
                 click.echo(f"{source:7} not imported")
 
+    @app.cli.command("mlflow-ui")
+    @click.option("--port", default=5050, show_default=True)
+    def mlflow_ui(port):
+        """Open the MLflow UI on the app's tracking database (MLFLOW_TRACKING_URI)."""
+        import os
+        import socket
+        import subprocess
+        import sys
+
+        uri = app.config["MLFLOW_TRACKING_URI"]
+        if not uri:
+            raise click.ClickException("MLFLOW_TRACKING_URI is not set; add e.g. MLFLOW_TRACKING_URI=sqlite:///mlflow.db "
+                                       "to backend/.env")
+        url = f"http://127.0.0.1:{port}"
+        with socket.socket() as s:
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                click.echo(f"Something is already running on port {port}: if it is the MLflow UI, open {url} "
+                           f"(otherwise use --port).")
+                return
+        click.echo(f"MLflow UI on {uri}\nOpen {url}  (Ctrl+C to stop)")
+        mlflow_bin = os.path.join(os.path.dirname(sys.executable), "mlflow")  # the venv's MLflow, not the PATH's
+        subprocess.run([mlflow_bin, "ui", "--backend-store-uri", uri, "--port", str(port)], check=False)
+
+    @app.cli.command("mlflow-eval")
+    @click.option("--llm", is_flag=True, help="Run the whole workflow, including the LLM reports and agents (costs tokens).")
+    @click.option("--case", "cases", multiple=True, help="Only this mock VCF (repeatable), e.g. mock_luad_kras_g12c.")
+    def mlflow_eval(llm, cases):
+        """Evaluate Workflow 4 on the mock VCFs against their expected answers (see app/evaluation.py)."""
+        from .evaluation import run_evaluation
+
+        try:
+            result = run_evaluation(app, llm=llm, cases=cases)
+        except (RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc))
+        click.echo("\nPass rate per check:")
+        for name, value in sorted(result.metrics.items()):
+            click.echo(f"  {name:45} {value:.0%}" if isinstance(value, float) else f"  {name:45} {value}")
+        click.echo(f"\nDetails: MLflow UI -> experiment {app.config['MLFLOW_EXPERIMENT_PREFIX']}-vcf -> Evaluation runs "
+                   f"(run {result.run_id})")
+
     @app.cli.command("dump-schema")
     def dump_schema():
         """Print MySQL DDL generated from the models (used to produce schema.sql)."""
@@ -46,3 +102,73 @@ def register_cli(app):
             for index in sorted(table.indexes, key=lambda i: i.name):
                 click.echo(str(CreateIndex(index).compile(dialect=mysql.dialect())).strip() + ";")
             click.echo()
+
+    @app.cli.command("dump-er")
+    def dump_er():
+        """Print Mermaid ER diagrams generated from the models (used in docs/database.md)."""
+        from .er_diagram import mermaid
+
+        click.echo(mermaid())
+
+    @app.cli.command("warm-cache")
+    @click.option("--no-vcf", is_flag=True, help="Skip the mock VCFs (they call Ensembl VEP and take longest).")
+    def warm_cache(no_vcf):
+        """Run the demo searches once without the LLM, so their API answers are in the local store (http_cache.py).
+        Then a demo works even if an API is down, or offline with HTTP_CACHE=offline."""
+        from .http_cache import store_size
+        from .services.biomed import collect_evidence
+        from .services.relations import DEFAULT_RELATION_TYPES
+        from .services.variants.cancer_types import resolve_cancer_type
+        from .services.variants.pipeline import run_pipeline
+        from .services.vcf_explorer import load_example, mock_examples
+
+        if store_size() is None:
+            raise click.ClickException("HTTP_CACHE is off; set HTTP_CACHE=fallback (the default) in backend/.env")
+        searches = [("gene", g) for g in DEMO_GENES] + [("drug", d) for d in DEMO_DRUGS]
+        for entity_type, name in searches:
+            try:
+                collect_evidence(name, DEFAULT_RELATION_TYPES, entity_type=entity_type)
+                click.echo(f"ok    {entity_type} {name}")
+            except Exception as exc:  # noqa: BLE001 - report and carry on with the others
+                click.echo(f"FAIL  {entity_type} {name}: {exc}")
+        if not no_vcf:
+            for example in mock_examples():
+                try:
+                    variants, info, ex = load_example(example["id"])
+                    run_pipeline(variants, info, resolve_cancer_type(ex["cancer_type"]))
+                    click.echo(f"ok    vcf {example['id']}")
+                except Exception as exc:  # noqa: BLE001
+                    click.echo(f"FAIL  vcf {example['id']}: {exc}")
+        click.echo(f"\n{store_size()} API responses stored in {app.config['HTTP_CACHE_PATH']}")
+
+    @app.cli.command("create-user")
+    @click.argument("email")
+    @click.password_option()
+    @click.option("--admin", is_flag=True, help="Let this account open the admin console.")
+    def create_user(email, password, admin):
+        """Create an account, or reset an existing one's password and role."""
+        user = _upsert_user(email, password, admin)
+        click.echo(f"{user.email}: {'admin' if user.is_admin else 'user'} account ready")
+
+    @app.cli.command("seed-demo")
+    def seed_demo():
+        """Create the sample accounts listed in docs/USER_MANUAL.md (resets their passwords if they exist)."""
+        for email, password, admin in DEMO_ACCOUNTS:
+            _upsert_user(email, password, admin)
+            click.echo(f"{email:28} {password:12} {'admin' if admin else 'user'}")
+
+
+def _upsert_user(email, password, admin):
+    from werkzeug.security import generate_password_hash
+
+    from .models import User
+
+    email = email.strip().lower()
+    if len(password) < 8:
+        raise click.ClickException("Password must be at least 8 characters")
+    user = User.query.filter_by(email=email).first() or User(email=email)
+    user.password_hash = generate_password_hash(password)
+    user.is_admin = admin
+    db.session.add(user)
+    db.session.commit()
+    return user

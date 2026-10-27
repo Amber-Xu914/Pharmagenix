@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { el, formatDate } from "./util.js";
 
 const $ = (id) => document.getElementById(id);
 const state = { user: null, mode: "login" };
@@ -18,6 +19,23 @@ function setOpen(open) {
   $("user-menu").classList.toggle("hidden", !open || !state.user);
   $("account-btn").setAttribute("aria-expanded", String(open));
   if (open && !state.user) $("auth-email").focus();
+  if (open && state.user) loadHistory();
+}
+
+/** The user's last searches (queries.user_id), newest first; each reopens its stored result. */
+async function loadHistory() {
+  const list = $("history-list");
+  list.replaceChildren(el("li", { class: "muted" }, "Loading…"));
+  try {
+    const queries = await api.history();
+    list.replaceChildren(...(queries.length ? queries.map((q) => el("li", {},
+      el("a", { href: `/?q=${q.id}` }, q.entity_type === "vcf" ? `🧪 ${q.entities[0]}` : `🧬 ${q.entities[0]}`),
+      el("span", { class: "muted" }, ` · ${[q.cancer_type, q.followup_question && "follow-up",
+        q.status !== "complete" && q.status, formatDate(q.created_at)].filter(Boolean).join(" · ")}`)))
+      : [el("li", { class: "muted" }, "No searches yet: they are saved here while you are logged in.")]));
+  } catch (err) {
+    list.replaceChildren(el("li", { class: "report-error" }, err.message));
+  }
 }
 
 function isOpen() {
@@ -29,6 +47,7 @@ function setUser(user) {
   $("account-btn").textContent = user ? `🧑‍🔬 ${user.email}` : "Log in";
   $("account-btn").title = user?.email || "";
   $("user-email").textContent = user?.email || "";
+  $("admin-link").classList.toggle("hidden", !user?.is_admin);
   document.dispatchEvent(new CustomEvent("auth:change", { detail: user }));
 }
 

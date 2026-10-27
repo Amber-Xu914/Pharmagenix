@@ -1,6 +1,7 @@
 import requests
-from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+from ...http_cache import cached_session
 
 
 class SourceError(Exception):
@@ -13,13 +14,12 @@ class BaseAPIClient:
     def __init__(self, base_url, timeout=20, headers=None):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
-        self.session = requests.Session()
+        retry = Retry(total=2, backoff_factor=0.8, status_forcelist=(429, 500, 502, 503, 504),
+                      allowed_methods=("GET", "POST"))
+        self.session = cached_session(max_retries=retry)  # see http_cache.py: stored answers when the API fails
         self.session.headers.update({"User-Agent": "DGI-Explorer/0.1 (academic project)"})
         if headers:
             self.session.headers.update(headers)
-        retry = Retry(total=2, backoff_factor=0.8, status_forcelist=(429, 500, 502, 503, 504),
-                      allowed_methods=("GET", "POST"))
-        self.session.mount("https://", HTTPAdapter(max_retries=retry))
 
     def _request(self, method, path, allow_404=False, **kwargs):
         url = path if path.startswith("http") else f"{self.base_url}/{path.lstrip('/')}"

@@ -7,4 +7,5 @@ python-dotenv>=1.0
 requests>=2.31
 openai>=1.60
 anthropic>=0.50
+mlflow>=3.17,<4      # optional: experiment tracking and tracing (MLFLOW_TRACKING_URI)
 pytest>=8.0

@@ -6,6 +6,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _sqlite_uri(uri):
+    """A relative SQLite URI (sqlite:///mlflow.db) is made absolute under backend/, so the app and `flask mlflow-ui`
+    use the same database whatever folder they are started from."""
+    prefix = "sqlite:///"
+    if uri.startswith(prefix) and not uri.startswith(prefix + "/"):
+        return prefix + os.path.join(BACKEND_DIR, uri[len(prefix):])
+    return uri
+
+
 def _float_or_none(value):
     return float(value) if value not in (None, "") else None
 
@@ -45,6 +57,17 @@ class Config:
     DRUGBANK_URL = os.getenv("DRUGBANK_URL", "https://api.drugbank.com/v1")
     DRUGBANK_API_KEY = os.getenv("DRUGBANK_API_KEY", "")
     HTTP_TIMEOUT = float(os.getenv("HTTP_TIMEOUT", "20"))
+    # Local store of live API answers (app/http_cache.py): fallback = live, stored copy when an API fails;
+    # offline = stored copy first (demo without network; fill it with `flask --app run warm-cache`); off.
+    HTTP_CACHE = os.getenv("HTTP_CACHE", "fallback")
+    HTTP_CACHE_PATH = os.getenv("HTTP_CACHE_PATH", os.path.join(BACKEND_DIR, "http_cache.sqlite"))
+    # Gene profile (workflow stage 2)
+    UNIPROT_URL = os.getenv("UNIPROT_URL", "https://rest.uniprot.org")
+    # Workflow 4 (patient VCF): variant annotation and OncoKB (optional; needs a licensed token)
+    VEP_URL = os.getenv("VEP_URL", "https://rest.ensembl.org")                  # GRCh38
+    VEP_GRCH37_URL = os.getenv("VEP_GRCH37_URL", "https://grch37.rest.ensembl.org")
+    ONCOKB_URL = os.getenv("ONCOKB_URL", "https://www.oncokb.org/api/v1")
+    ONCOKB_API_TOKEN = os.getenv("ONCOKB_API_TOKEN", "")
 
     # Local reference datasets (imported with `flask --app run import-data`)
     HGNC_URL = os.getenv(
@@ -56,13 +79,29 @@ class Config:
     FDA_BIOMARKERS_URL = os.getenv(
         "FDA_BIOMARKERS_URL",
         "https://www.fda.gov/drugs/science-and-research-drugs/table-pharmacogenomic-biomarkers-drug-labeling")
+    # Workflow 4 (patient VCF): cancer types, driver genes and variant-level drug evidence
+    ONCOTREE_API_URL = os.getenv("ONCOTREE_API_URL", "https://oncotree.info/api")
+    INTOGEN_DRIVERS_URL = os.getenv(
+        "INTOGEN_DRIVERS_URL", "https://www.intogen.org/download?file=IntOGen-Drivers-20240920.zip")
+    CIVIC_EVIDENCE_URL = os.getenv(
+        "CIVIC_EVIDENCE_URL", "https://civicdb.org/downloads/nightly/nightly-ClinicalEvidenceSummaries.tsv")
+    CBIOPORTAL_URL = os.getenv("CBIOPORTAL_URL", "https://www.cbioportal.org/api")
+    CBIOPORTAL_SUBTYPE_STUDIES = {  # OncoTree code -> reference study for gene frequencies (Tier 3 R)
+        "LUAD": "luad_tcga_pan_can_atlas_2018", "LUSC": "lusc_tcga_pan_can_atlas_2018",
+        "NSCLC": "nsclc_tcga_broad_2016", "SCLC": "sclc_ucologne_2015",
+    }
+    CANCER_HOTSPOTS_URL = os.getenv("CANCER_HOTSPOTS_URL", "https://www.cancerhotspots.org/api/hotspots/single")
     PBS_API_URL = os.getenv("PBS_API_URL", "https://data-api.health.gov.au/pbs/api/v3")
     # Published key for unregistered public users; shared rate limit of 1 request per 20 seconds.
     PBS_SUBSCRIPTION_KEY = os.getenv("PBS_SUBSCRIPTION_KEY") or "2384af7c667342ceb5a736fe29f1dc6b"
     PBS_MIN_INTERVAL = float(os.getenv("PBS_MIN_INTERVAL", "21"))
 
+    # MLflow (optional): set MLFLOW_TRACKING_URI (e.g. sqlite:///mlflow.db) to track every search as a run + trace
+    MLFLOW_TRACKING_URI = _sqlite_uri(os.getenv("MLFLOW_TRACKING_URI", ""))
+    MLFLOW_EXPERIMENT_PREFIX = os.getenv("MLFLOW_EXPERIMENT_PREFIX", "pharmagenix")
+    MLFLOW_LOG_ARTIFACTS = os.getenv("MLFLOW_LOG_ARTIFACTS", "true").lower() == "true"
+
     # Limits
-    MAX_ENTITIES = 50              # genes/drugs per query (gene panels included)
     MAX_INTERACTIONS = 300         # rows kept in the table / network
     MAX_PROMPT_EVIDENCE = 80       # evidence items passed to the LLM
     MAX_PUBLICATIONS = 15
@@ -70,6 +109,31 @@ class Config:
     MAX_MECHANISMS = 100
     MAX_GUIDELINES = 30
     MAX_PBS_DRUGS = 20             # drugs checked for Australian PBS listing per query
+    MAX_VCF_BYTES = 20_000_000     # uploaded VCF / MAF
+    MAX_VCF_VARIANTS = 5000        # PASS variants annotated per upload (VEP REST: 200 per request)
+    # Workflow 4 stage 1, strict QC (hard filter)
+    VCF_QC_MIN_DEPTH = 20
+    VCF_QC_MIN_ALT_READS = 5
+    VCF_QC_MIN_VAF = 0.05
+    VCF_QC_MAX_POPULATION_AF = 0.01   # gnomAD: above this the variant is treated as germline
+    VCF_QC_MAX_NORMAL_ALT_READS = 1   # more ALT reads than this in the matched normal: germline
+    # Workflow 4 stage 3: Tier 3 score S = wF·F + wR·R + wB·B, each component 0–1 (example weights, configurable)
+    VCF_TIER3_WEIGHTS = {"F": 0.4, "R": 0.3, "B": 0.3}
+    VCF_TIER3_R_SATURATION = 0.25     # subtype mutation frequency that counts as R = 1
+    VCF_TIER3_B_PARTS = {"cancer_role": 0.4, "pathway": 0.3, "tsg_loss": 0.3}
+    VCF_TIER3_MIN_SCORE = 0.4         # below: "low priority" list (kept and reported, not deleted)
+    # Workflow 4 stages 6–7: the literature search behind the Literature agent, and the report
+    VCF_LITERATURE_QUERIES = 8        # PubTator searches for Tier 3 variants and level 3–4 pairs (0 = off)
+    # Retrieval for the Literature agent (services/variants/literature.py): PubTator hits are gated on the gene /
+    # drug, re-ranked, and the best abstract sentences passed on. MedCPT needs requirements-rag.txt.
+    VCF_LITERATURE_RANKER = os.getenv("VCF_LITERATURE_RANKER", "auto")  # auto (MedCPT if installed) | medcpt | keyword
+    VCF_LITERATURE_CANDIDATES = 10    # PubTator hits per query, before re-ranking
+    VCF_LITERATURE_PER_QUERY = 3      # papers kept per query after re-ranking
+    VCF_LITERATURE_SENTENCES = 2      # abstract sentences per paper given to the Literature agent
+    VCF_LITERATURE_MIN_SCORE = 0.0    # MedCPT Cross-Encoder score below which a paper is off-topic (they sit near -10)
+    MEDCPT_DEVICE = os.getenv("MEDCPT_DEVICE", "")  # "" = Apple GPU (mps) when available, else cpu
+    VCF_TOP_PER_TRACK = 10            # drugs shown per track; the full lists go to the appendix
+    VCF_AGENTS = True                 # run the exploration agents (LLM) on the exploratory track
 
 
 class TestConfig(Config):
@@ -80,3 +144,7 @@ class TestConfig(Config):
     OPENAI_API_KEY = "test"
     ANTHROPIC_API_KEY = "test"
     PBS_MIN_INTERVAL = 0
+    ONCOKB_API_TOKEN = ""  # no live OncoKB calls from tests, even with a token in .env
+    HTTP_CACHE = "off"  # tests never read or write the response store
+    VCF_LITERATURE_RANKER = "keyword"  # tests never load MedCPT
+    MLFLOW_TRACKING_URI = ""  # tests that need MLflow turn it on themselves

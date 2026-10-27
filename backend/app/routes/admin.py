@@ -4,22 +4,27 @@ from functools import wraps
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import func
 
+from ..accounts import current_user
 from ..errors import APIError
 from ..extensions import db
 from ..models import Feedback, PromptLog, PromptTemplate, Query, Report
 from ..reference.lookup import latest_releases
 from ..services.llm.report_generator import generate_reports
-from ..services.prompts import render_prompt
+from ..services.prompts import activate_template as activate_in_workflow, render_prompt
+from ..services.variants.agents import AGENT_ROLES, build_prompts as agent_prompts
 
 bp = Blueprint("admin", __name__)
 
 
 @bp.before_request
 def require_admin():
-    # Simple shared-token auth; replace with real accounts before deploying publicly.
+    """An admin account (users.is_admin, logged in on the explorer) or the shared ADMIN_TOKEN header."""
+    user = current_user()
+    if user and user.is_admin:
+        return
     token = request.headers.get("X-Admin-Token", "")
-    if not hmac.compare_digest(token, current_app.config["ADMIN_TOKEN"]):
-        raise APIError("Invalid admin token", 401)
+    if not token or not hmac.compare_digest(token, current_app.config["ADMIN_TOKEN"]):
+        raise APIError("Admin access needed: log in with an admin account, or enter the admin token", 401)
 
 
 def _page():
@@ -105,9 +110,7 @@ def preview_template():
 
 
 def _activate(template):
-    PromptTemplate.query.update({PromptTemplate.is_active: False})
-    template.is_active = True
-    db.session.commit()
+    activate_in_workflow(template)
 
 
 def _check_renders(system_prompt, user_template):
@@ -143,7 +146,10 @@ def retry_report(report_id):
     report = db.get_or_404(Report, report_id)
     if not report.query.evidence:
         raise APIError("The query has no stored evidence to regenerate from")
-    [new_report] = generate_reports(report.query, [(report.provider, report.role)])
+    if report.role in AGENT_ROLES:  # a Workflow 4 exploration agent: rebuilt from its own prompt
+        [new_report] = generate_reports(report.query, [], extra_prompts=agent_prompts(report.query, [report.role]))
+    else:
+        [new_report] = generate_reports(report.query, [(report.provider, report.role)])
     return jsonify(new_report.to_dict()), 201
 
 

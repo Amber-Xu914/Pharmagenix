@@ -2,14 +2,14 @@
 
 import re
 
-# Counter-ions and hydrate words that turn a parent drug name into a salt form,
-# e.g. "clopidogrel bisulfate" -> "CLOPIDOGREL".
+# Counter-ions, hydrate and form words that turn a parent drug name into a salt form,
+# e.g. "clopidogrel bisulfate" -> "CLOPIDOGREL", "codeine anhydrous" / "codeine polistirex" -> "CODEINE".
 SALT_WORDS = {
-    "ACETATE", "BESILATE", "BESYLATE", "BISULFATE", "BITARTRATE", "BROMIDE", "CALCIUM", "CHLORIDE",
+    "ACETATE", "ANHYDROUS", "BESILATE", "BESYLATE", "BISULFATE", "BITARTRATE", "BROMIDE", "CALCIUM", "CHLORIDE",
     "CITRATE", "DIHYDRATE", "DIHYDROCHLORIDE", "DIPROPIONATE", "DISODIUM", "FUMARATE", "HCL",
-    "HEMIFUMARATE", "HEMIHYDRATE", "HYCLATE", "HYDROBROMIDE", "HYDROCHLORIDE", "HYDROGEN", "LACTATE",
+    "HEMIFUMARATE", "HEMIHYDRATE", "HYCLATE", "HYDRATE", "HYDROBROMIDE", "HYDROCHLORIDE", "HYDROGEN", "LACTATE",
     "MAGNESIUM", "MALEATE", "MESILATE", "MESYLATE", "MONOHYDRATE", "NITRATE", "OXALATE", "PHOSPHATE",
-    "POTASSIUM", "PROPIONATE", "SODIUM", "SUCCINATE", "SULFATE", "SULPHATE", "TARTRATE", "TOSILATE",
+    "POLISTIREX", "POTASSIUM", "PROPIONATE", "SESQUIHYDRATE", "SODIUM", "SUCCINATE", "SULFATE", "SULPHATE", "TARTRATE", "TOSILATE",
     "TOSYLATE", "TRIHYDRATE", "VALERATE",
 }
 

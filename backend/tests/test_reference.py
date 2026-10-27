@@ -7,10 +7,10 @@ from app.reference.importers import drug_synonym_index, gene_symbol_index, repla
 from app.reference.importers.chembl import build_drugs, build_mechanisms
 from app.reference.importers.cpic import build_pairs, build_recommendations
 from app.reference.importers.hgnc import parse_hgnc
-from app.reference.importers.pbs import build_items
+from app.reference.importers.pbs import build_items, build_restrictions
 from app.reference.models import (
     ClinpgxGuideline, ClinpgxGuidelinePair, CpicAllele, CpicAlleleFrequency, CpicDiplotype, CpicGeneResult,
-    CpicPair, CpicRecommendation, CpicTestAlert, Drug, DrugMechanism, DrugSynonym, Gene, GeneAlias, PbsItem,
+    CpicPair, CpicRecommendation, CpicTestAlert, Drug, DrugMechanism, DrugSynonym, Gene, GeneAlias, PbsItem, PbsItemRestriction, PbsRestriction,
     SourceRelease,
 )
 from app.reference.normalise import resolve_entities
@@ -74,6 +74,18 @@ PBS_ITEMS = [
     {"pbs_code": "13365K", "drug_name": "Clopidogrel", "brand_name": "Plidogrel", "li_form": "Tablet 75 mg",
      "program_code": "GE", "benefit_type_code": "R", "schedule_code": 4333},
 ]
+PBS_RESTRICTIONS = [
+    {"res_code": "1_R", "treatment_phase": None, "authority_method": None, "schedule_code": 4333,
+     "li_html_text": "<h1>Listing</h1><p>Acute coronary syndrome</p>"},
+    {"res_code": "2_R", "treatment_phase": "Initial treatment", "authority_method": "STREAMLINED", "schedule_code": 4333,
+     "li_html_text": "<p>Stent</p>"},
+]
+PBS_LINKS = [  # 2_R twice (duplicate link), and one link to an unknown restriction
+    {"pbs_code": "13365K", "res_code": "1_R", "benefit_type_code": "R"},
+    {"pbs_code": "13365K", "res_code": "2_R", "benefit_type_code": "R"},
+    {"pbs_code": "13365K", "res_code": "2_R", "benefit_type_code": "R"},
+    {"pbs_code": "13365K", "res_code": "9_R", "benefit_type_code": "R"},
+]
 
 
 @pytest.fixture
@@ -87,7 +99,9 @@ def reference_data(app):
     replace_tables([(Drug, drugs), (DrugSynonym, synonyms), (DrugMechanism, mechanisms)])
     replace_tables([(CpicPair, build_pairs(CPIC_PAIRS, gene_symbol_index(), drug_synonym_index())),
                     (CpicRecommendation, build_recommendations(CPIC_RECOMMENDATIONS))])
-    replace_tables([(PbsItem, build_items(PBS_ITEMS, date(2026, 9, 1), drug_synonym_index()))])
+    restrictions, links = build_restrictions(PBS_RESTRICTIONS, PBS_LINKS)
+    replace_tables([(PbsItem, build_items(PBS_ITEMS, date(2026, 9, 1), drug_synonym_index())),
+                    (PbsRestriction, restrictions), (PbsItemRestriction, links)])
     for source in ("hgnc", "chembl", "cpic", "pbs"):
         db.session.add(SourceRelease(source=source, version=f"{source} test", status="ok"))
     db.session.commit()
@@ -95,6 +109,7 @@ def reference_data(app):
 
 def test_strip_salt():
     assert strip_salt("Clopidogrel bisulfate") == "CLOPIDOGREL"
+    assert strip_salt("CODEINE ANHYDROUS") == strip_salt("Codeine polistirex") == "CODEINE"  # DGIdb lists these apart
     assert strip_salt("metoprolol (succinate)") == "METOPROLOL"
     assert strip_salt("SODIUM") == "SODIUM"  # never strip a name down to nothing
     assert strip_salt("Magnesium sulfate") == "MAGNESIUM SULFATE"  # the salt is the drug
@@ -149,6 +164,7 @@ def stub_live_sources(monkeypatch):
     monkeypatch.setattr("app.services.biomed.dgidb.DGIdbClient.fetch_interactions", dgidb)
     monkeypatch.setattr("app.services.biomed.pharmgkb.PharmGKBClient.clinical_annotations", lambda self, **kw: [])
     monkeypatch.setattr("app.services.biomed.pubtator.PubTatorClient.search_pairs", lambda self, *a, **kw: [])
+    monkeypatch.setattr("app.services.biomed.uniprot.UniProtClient.protein", lambda self, **kw: None)
     return calls
 
 
@@ -156,31 +172,72 @@ def test_collect_evidence_uses_reference_data(app, reference_data, stub_live_sou
     from app.services.biomed import collect_evidence
     from app.services.relations import DEFAULT_RELATION_TYPES
 
-    evidence = collect_evidence(["Plavix"], "auto", DEFAULT_RELATION_TYPES)
+    evidence = collect_evidence("CPCJ", DEFAULT_RELATION_TYPES)
 
-    assert stub_live_sources["dgidb"] == ([], ["CLOPIDOGREL"])  # DGIdb queried with the normalised name
-    assert evidence["normalisation"][0]["matched_by"] == "ChEMBL synonym (trade name)"
+    assert stub_live_sources["dgidb"] == (["CYP2C19"], [])  # DGIdb queried with the normalised symbol
+    assert evidence["normalisation"][0]["matched_by"] == "HGNC alias"
     kinds = [i["kind"] for i in evidence["items"]]
-    assert kinds == ["interaction", "mechanism", "guideline"]  # salt form merged into one interaction
+    assert kinds == ["interaction", "guideline", "profile"]  # salt form merged into one interaction
     assert (evidence["items"][0]["score"], evidence["items"][0]["sources"]) == (2.0, ["CPIC", "PharmGKB"])
-    guideline = evidence["items"][2]
+    guideline = evidence["items"][1]
     assert guideline["recommendations"][0]["recommendation"] == "Avoid clopidogrel"  # actionable first
-    assert evidence["source_status"]["chembl"] == {"state": "ok", "count": 1, "version": "chembl test"}
+    assert evidence["source_status"]["chembl"] == {"state": "ok", "count": 0, "version": "chembl test"}
+    assert evidence["outcome"]["status"] == "found"
     assert len(evidence["australian_availability"]) == 1  # one row per drug, not per salt form
     assert evidence["australian_availability"][0]["pbs_listed"] is True
     assert evidence["australian_availability"][0]["items"][0]["brands"] == ["Clovix 75", "Plidogrel"]
+    restrictions = evidence["australian_availability"][0]["restrictions"]
+    assert [(r["res_code"], r["pbs_codes"]) for r in restrictions] == [("1_R", ["13365K"]), ("2_R", ["13365K"])]
+    assert restrictions[1]["treatment_phase"] == "Initial treatment"
+    assert restrictions[0]["html"] == "<h1>Listing</h1><p>Acute coronary syndrome</p>"  # as published
     categories = {e["data"]["category"] for e in evidence["network"]["edges"]}
-    assert categories == {"other", "inhibit", "snp"}  # ChEMBL "antagonist" counts as inhibition
+    assert categories == {"other", "snp"}
+    assert [s["stage"] for s in evidence["trace"]] == ["resolution", "profiles", "retrieval", "evidence"]
+
+
+def test_collect_evidence_mechanisms(app, reference_data, stub_live_sources):
+    from app.services.biomed import collect_evidence
+
+    evidence = collect_evidence("P2RY12", [])
+    mechanism = next(i for i in evidence["items"] if i["kind"] == "mechanism")
+    assert (mechanism["drug"], mechanism["categories"]) == ("CLOPIDOGREL", ["inhibit"])  # antagonist → inhibition
+
+
+def test_collect_evidence_for_a_drug(app, reference_data, stub_live_sources):
+    from app.services.biomed import collect_evidence
+
+    evidence = collect_evidence("Plavix", [], entity_type="drug")  # a trade name
+
+    entry = evidence["normalisation"][0]
+    assert (entry["type"], entry["name"], entry["id"]) == ("drug", "CLOPIDOGREL", "CHEMBL1771")
+    assert stub_live_sources["dgidb"] == ([], ["CLOPIDOGREL"])  # DGIdb queried by drug, not by gene
+    by_kind = {i["kind"]: i for i in evidence["items"]}
+    assert by_kind["mechanism"]["gene"] == "P2RY12"  # ChEMBL mechanisms of the drug
+    assert by_kind["guideline"]["gene"] == "CYP2C19"  # CPIC guidelines that name the drug
+    profile = by_kind["profile"]
+    assert (profile["entity_type"], profile["full_name"], profile["first_approval"]) == ("drug", "CLOPIDOGREL", 1997)
+    assert profile["trade_names"] == ["Plavix"] and profile["mechanisms"] == ["P2Y12 antagonist"]
+    assert evidence["australian_availability"][0]["drug"] == "CLOPIDOGREL"  # the searched drug first
+    assert evidence["trace"][1]["detail"] == "drug profile · ChEMBL"
+    assert {n["data"]["label"] for n in evidence["network"]["nodes"] if n["data"]["is_query"]} == {"CLOPIDOGREL"}
+
+
+def test_unknown_drug_gets_drug_suggestions(app, reference_data, client):
+    resp = client.post("/api/explore", json={"entity_type": "drug", "drug": "clopidogrol"})
+    assert resp.status_code == 422
+    problem = resp.get_json()["resolution"][0]
+    assert problem["suggestions"][0]["name"] == "CLOPIDOGREL" and problem["suggestions"][0]["type"] == "drug"
 
 
 def test_collect_evidence_without_reference_data(app, stub_live_sources):
     from app.services.biomed import collect_evidence
 
-    evidence = collect_evidence(["CYP2C19"], "auto", ["snp", "other"])
-    assert stub_live_sources["dgidb"] == (["CYP2C19"], ["CYP2C19"])  # unresolved: tried as both
+    evidence = collect_evidence("CYP2C19", ["snp", "other"])
+    assert stub_live_sources["dgidb"] == (["CYP2C19"], [])  # unresolved: searched as typed
     assert evidence["source_status"]["chembl"]["state"] == "disabled"
     assert evidence["source_status"]["pbs"]["state"] == "disabled"
     assert evidence["australian_availability"] is None  # frontend shows "not imported"
+
 
 # ---------- CPIC supporting tables, ClinPGx, DGIdb, FDA ----------
 

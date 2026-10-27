@@ -1,13 +1,30 @@
-import { CATEGORY_LABELS, categoryColor, el, focusEvidence } from "./util.js";
+import { CATEGORY_LABELS, GRADES, categoryColor, el, focusEvidence } from "./util.js";
+import { gradeBadge } from "./workflow.js";
 
 // Rows with an unspecified interaction type (about 90% of DGIdb) are collapsed to this many until expanded.
 const UNSPECIFIED_PREVIEW = 5;
+const GRADE_ORDER = Object.keys(GRADES);
 
 const phaseOf = (row) => Number(/Phase (\d+(?:\.\d+)?)/.exec(row.level || "")?.[1] ?? -1);
+const gradeRank = (row) => (row.grade ? GRADE_ORDER.indexOf(row.grade) : GRADE_ORDER.length);
+const isUnspecified = (row) => row.categories.length === 1 && row.categories[0] === "other";
 
-/** Typed interactions first, then curated (ChEMBL) mechanisms by clinical phase, then DGIdb score. */
+/** Rows are one graded gene–drug pair each (stage 5). Rows saved before that had one row per evidence item. */
+function normaliseRow(row) {
+  return {
+    ...row,
+    evidence_ids: row.evidence_ids || [row.evidence_id],
+    categories: row.categories || [row.category],
+    sources: row.sources || [],
+    pmids: row.pmids || [],
+    conflicts: row.conflicts || [],
+  };
+}
+
+/** By evidence grade, then typed before unspecified, phase, DGIdb score. */
 function defaultOrder(a, b) {
-  return (a.category === "other") - (b.category === "other")
+  return gradeRank(a) - gradeRank(b)
+    || isUnspecified(a) - isUnspecified(b)
     || phaseOf(b) - phaseOf(a)
     || (b.score ?? -1) - (a.score ?? -1);
 }
@@ -17,10 +34,10 @@ const COLUMNS = [
   { key: "drug", label: "Drug" },
   { key: "category", label: "Relationship" },
   { key: "relation", label: "Action / mechanism" },
-  { key: "evidence", label: "Evidence", sort: (r) => phaseOf(r) * 1000 + (r.score ?? 0) },
+  { key: "grade", label: "Evidence", sort: (r) => -gradeRank(r) * 1000 + (r.score ?? 0) },
   { key: "sources", label: "Sources", sort: (r) => r.sources.length },
   { key: "pbs", label: "PBS" },
-  { key: "evidence_id", label: "Ref", sort: (r) => Number(r.evidence_id.slice(1)) },
+  { key: "evidence_id", label: "Refs", sort: (r) => Number(r.evidence_ids[0].slice(1)) },
 ];
 
 export class DgiTable {
@@ -43,11 +60,11 @@ export class DgiTable {
 
   /** rows: table rows for interactions/mechanisms; items: evidence by ID; availability: PBS entries. */
   setRows(rows, { items = new Map(), availability = null } = {}) {
-    this.rows = (rows || []).map((r) => ({ ...r, pbs: pbsStatus(availability, r.drug) }));
+    this.rows = (rows || []).map((r) => ({ ...normaliseRow(r), pbs: pbsStatus(availability, r.drug) }));
     this.items = items;
     this.sortKey = null;
     this.showAll = false;
-    const categories = [...new Set(this.rows.map((r) => r.category))];
+    const categories = [...new Set(this.rows.flatMap((r) => r.categories))];
     const current = this.categorySelect.value;
     this.categorySelect.replaceChildren(
       el("option", { value: "" }, "All relationship types"),
@@ -61,7 +78,7 @@ export class DgiTable {
     const text = this.filterInput.value.trim().toLowerCase();
     const category = this.categorySelect.value;
     const rows = this.rows.filter((r) =>
-      (!category || r.category === category)
+      (!category || r.categories.includes(category))
       && (!text || [r.gene, r.drug, r.relation].some((v) => v && v.toLowerCase().includes(text))));
     if (!this.sortKey) return rows.sort(defaultOrder);
     const column = COLUMNS.find((c) => c.key === this.sortKey);
@@ -73,9 +90,9 @@ export class DgiTable {
   visibleRows(rows, showAll = this.showAll) {
     const filtering = this.filterInput.value.trim() || this.categorySelect.value;
     if (showAll || filtering) return { rows, hidden: 0 };
-    const unspecified = rows.filter((r) => r.category === "other");
+    const unspecified = rows.filter(isUnspecified);
     const keep = new Set(unspecified.slice(0, UNSPECIFIED_PREVIEW));
-    const shown = rows.filter((r) => r.category !== "other" || keep.has(r));
+    const shown = rows.filter((r) => !isUnspecified(r) || keep.has(r));
     return { rows: shown, hidden: rows.length - shown.length };
   }
 
@@ -105,43 +122,46 @@ export class DgiTable {
   }
 
   renderRow(r) {
-    const item = this.items.get(r.evidence_id) || {};
-    return el("tr", { class: "ev-row", "data-eid": r.evidence_id },
+    return el("tr", { class: "ev-row", "data-eids": r.evidence_ids.join(" ") },
       el("td", {}, r.gene),
       el("td", {}, r.drug),
-      el("td", {}, el("span", { class: "cat-badge", style: `background:${categoryColor(r.category)}` },
-        CATEGORY_LABELS[r.category] || r.category)),
+      el("td", {}, r.categories.map((c) => el("span", { class: "cat-badge", style: `background:${categoryColor(c)}` },
+        CATEGORY_LABELS[c] || c))),
       el("td", {}, r.url ? el("a", { href: r.url, target: "_blank", rel: "noopener" }, r.relation) : r.relation),
-      el("td", { class: "evidence-cell" }, evidenceBadges(r, item)),
+      el("td", { class: "evidence-cell" }, evidenceBadges(r, this.items.get(r.evidence_ids[0]) || {})),
       el("td", { title: r.sources.join(", ") }, r.sources.length > 2 ? `${r.sources.slice(0, 2).join(", ")} +${r.sources.length - 2}` : r.sources.join(", ")),
       el("td", {}, r.pbs === "listed" ? el("span", { class: "badge success" }, "Listed")
         : r.pbs === "not listed" ? el("span", { class: "muted small" }, "Not listed") : ""),
       el("td", { class: "ref-cell" },
-        el("a", { href: "#", onclick: (e) => { e.preventDefault(); focusEvidence(r.evidence_id); } }, r.evidence_id),
+        r.evidence_ids.slice(0, 3).map((eid, i) => [i ? ", " : "",
+          el("a", { href: "#", onclick: (e) => { e.preventDefault(); focusEvidence(eid); } }, eid)]),
+        r.evidence_ids.length > 3 ? el("span", { class: "muted small", title: r.evidence_ids.join(", ") }, ` +${r.evidence_ids.length - 3}`) : "",
         r.pmids.length ? el("a", {
           href: `https://pubmed.ncbi.nlm.nih.gov/?term=${r.pmids.slice(0, 20).join("+OR+")}`,
-          target: "_blank", rel: "noopener", class: "muted small", title: r.pmids.slice(0, 20).join(", "),
-        }, ` ${r.pmids.length} PMID${r.pmids.length > 1 ? "s" : ""}`) : ""),
+          target: "_blank", rel: "noopener", class: "muted small pmids", title: r.pmids.slice(0, 20).join(", "),
+        }, `${r.pmids.length} PMID${r.pmids.length > 1 ? "s" : ""}`) : ""),
     );
   }
 
-  /** Highlight a row, expanding the collapse or clearing filters if they hide it. Returns false if absent. */
+  /** Highlight the row holding an evidence ID, expanding the collapse or clearing filters if they hide it. */
   highlight(eid) {
-    if (!this.rows.some((r) => r.evidence_id === eid)) return false;
-    let row = this.table.querySelector(`tr[data-eid="${CSS.escape(eid)}"]`);
+    if (!this.rows.some((r) => r.evidence_ids.includes(eid))) return false;
+    const selector = `tr[data-eids~="${CSS.escape(eid)}"]`;
+    let row = this.table.querySelector(selector);
     if (!row) {
       this.showAll = true;
       this.filterInput.value = "";
       this.categorySelect.value = "";
       this.render();
-      row = this.table.querySelector(`tr[data-eid="${CSS.escape(eid)}"]`);
+      row = this.table.querySelector(selector);
     }
     return row;
   }
 
   exportCsv() {
     const quote = (v) => `"${String(v ?? "").replaceAll('"', '""')}"`;
-    const keys = ["evidence_id", "gene", "drug", "category", "relation", "score", "level", "sources", "pmids", "pbs"];
+    const keys = ["gene", "drug", "categories", "relation", "grade", "grade_reason", "level", "score", "conflicts",
+                  "sources", "databases", "pmids", "pbs", "evidence_ids"];
     const lines = [keys.map(quote).join(",")];
     for (const r of this.filteredRows()) {
       lines.push(keys.map((k) => quote(Array.isArray(r[k]) ? r[k].join("; ") : r[k])).join(","));
@@ -159,17 +179,14 @@ function pbsStatus(availability, drug) {
   return entry ? (entry.pbs_listed ? "listed" : "not listed") : null;
 }
 
-/** Real evidence markers only: ChEMBL clinical phase, DGIdb score and approval status. */
+/** The stage 5 grade (with its reason), then the markers behind it: clinical levels, phase, DGIdb score, conflicts. */
 function evidenceBadges(row, item) {
-  const badges = [];
-  if (item.kind === "mechanism") {
-    const phase = phaseOf(row);
-    badges.push(el("span", { class: "ev-badge curated", title: "Curated mechanism of action (ChEMBL)" }, "ChEMBL curated"));
-    if (phase >= 4) badges.push(el("span", { class: "ev-badge approved" }, "Approved"));
-    else if (phase >= 0) badges.push(el("span", { class: "ev-badge" }, `Phase ${phase}`));
-  } else {
-    if (row.score != null) badges.push(el("span", { class: "ev-badge", title: "DGIdb interaction score" }, `DGIdb ${row.score}`));
-    if (item.drug_approved) badges.push(el("span", { class: "ev-badge approved" }, "Approved"));
-  }
+  const badges = [gradeBadge(row.grade, row.grade_reason)];
+  if (row.level) badges.push(el("span", { class: "ev-badge", title: "CPIC / PharmGKB level, ChEMBL clinical phase" }, row.level));
+  else if (item.kind === "mechanism") badges.push(el("span", { class: "ev-badge curated" }, "ChEMBL curated"));
+  if (row.score != null && row.score > 0) badges.push(el("span", { class: "ev-badge", title: "DGIdb interaction score" }, `DGIdb ${row.score}`));
+  if (row.drug_approved || item.drug_approved || phaseOf(row) >= 4) badges.push(el("span", { class: "ev-badge approved",
+    title: "Approved for at least one indication (DGIdb / ChEMBL max phase 4); not necessarily for this gene or disease" }, "Approved"));
+  if (row.conflicts.length) badges.push(el("span", { class: "ev-badge conflict", title: row.conflicts.join(" ") }, "⚠ Conflicting"));
   return badges;
 }

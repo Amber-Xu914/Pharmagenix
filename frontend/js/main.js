@@ -2,16 +2,34 @@ import { api } from "./api.js";
 import { renderAvailability } from "./availability.js";
 import { NetworkView } from "./network.js";
 import {
-  headlineNumbers, interactionRows, pgxAlerts, queryEntities, renderAlerts, renderHeader, renderLiterature, renderPgx,
-  scopeEvidence,
+  headlineNumbers, interactionRows, pgxAlerts, queryGene, renderAlerts, renderHeader, renderLiterature, renderPgx,
 } from "./profile.js";
 import { renderReports } from "./summary.js";
 import { DgiTable } from "./table.js";
 import { categoryColor, el } from "./util.js";
+import { initVcf, renderVcfQuery, vcfEvidenceTarget } from "./vcf.js";
+import { cacheNotice, renderProfiles, renderResolution, renderTrace, renderVerdict } from "./workflow.js";
 
 const $ = (id) => document.getElementById(id);
-// focus: the entity every section is narrowed to (null = all); scoped: the evidence for that focus.
-const state = { meta: null, query: null, entities: [], focus: null, scoped: null, view: "table", networkStale: true };
+const state = { meta: null, query: null, view: "table", networkStale: true, entityType: "gene" };
+
+const SEARCH_MODES = {
+  gene: { label: "Gene name", placeholder: "Search a gene, e.g. CYP2C19, BRAF or TPMT",
+    busy: "Resolving the gene, then fetching its profile and drug interactions and generating the report." },
+  drug: { label: "Drug name", placeholder: "Search a drug (generic or brand), e.g. clopidogrel, Plavix or codeine",
+    busy: "Resolving the drug, then fetching its profile and the genes it interacts with and generating the report." },
+};
+
+/** The gene and drug searches share one form: the mode decides the placeholder, examples and request. */
+document.addEventListener("mode:change", ({ detail: mode }) => {
+  if (!SEARCH_MODES[mode]) return;
+  state.entityType = mode;
+  $("search-label").textContent = SEARCH_MODES[mode].label;
+  $("gene").placeholder = SEARCH_MODES[mode].placeholder;
+  $("gene").value = "";
+  document.querySelectorAll("[data-examples]").forEach((box) => box.classList.toggle("hidden", box.dataset.examples !== mode));
+  $("resolution").classList.add("hidden");
+});
 
 const table = new DgiTable({
   table: $("dgi-table"),
@@ -35,6 +53,8 @@ async function init() {
   renderDataVersion(state.meta.reference_data || []);
   const comparison = state.meta.providers.comparison;
   $("compare-label").textContent = `Generate comparison report (with Claude)${comparison.enabled ? "" : " — API key not configured"}`;
+
+  initVcf({ run: (task, message) => withBusy([$("vcf-submit")], message, task) });
 
   const queryId = new URLSearchParams(location.search).get("q");
   if (queryId) {
@@ -82,13 +102,19 @@ function hideStatus() {
 
 async function withBusy(buttons, message, task) {
   buttons.forEach((b) => { b.disabled = true; });
+  $("resolution").classList.add("hidden");
   showStatus(message, "info", true);
   try {
     const query = await task();
     hideStatus();
     showQuery(query);
   } catch (err) {
-    showStatus(`Request failed: ${err.message}`, "error");
+    if (err.data?.code === "needs_confirmation") {
+      hideStatus();
+      askToConfirm(err.data.resolution);
+    } else {
+      showStatus(`Request failed: ${err.message}`, "error");
+    }
   } finally {
     buttons.forEach((b) => { b.disabled = false; });
   }
@@ -97,52 +123,50 @@ async function withBusy(buttons, message, task) {
 /** Render a query result. hash: a section to scroll to (from a shared link such as ?q=2#sec-pgx). */
 function showQuery(query, { hash = "" } = {}) {
   state.query = query;
-  state.entities = queryEntities(query);
-  state.focus = null;
-  const section = hash.startsWith("#sec-") ? document.querySelector(hash) : null;
+  const evidence = query.evidence || {};
+  const section = /^#(vcf-)?sec-/.test(hash) ? document.querySelector(hash) : null;
   history.replaceState(null, "", `?q=${query.id}${section ? hash : ""}`);
-  $("results").classList.remove("hidden");
+  const vcf = query.entity_type === "vcf";
+  $("results").classList.toggle("hidden", vcf);
+  $("vcf-results").classList.toggle("hidden", !vcf);
+  if (vcf) {
+    renderVcfQuery(query);
+    (section || $("vcf-results")).scrollIntoView({ behavior: scrollBehavior(), block: "start" });
+    return;
+  }
 
-  // The AI answer covers the whole query, so it isn't narrowed by the entity switcher.
-  const alerts = pgxAlerts(query.evidence?.items || []);
+  const alerts = pgxAlerts(evidence.items || []);
+  renderTrace($("workflow-trace"), query);
+  renderVerdict($("verdict"), query);
+  $("verdict").prepend(cacheNotice(evidence));
   renderReports($("reports"), query, { alerts: () => renderAlerts(alerts) });
-  renderScoped();
 
-  (section || $("results")).scrollIntoView({ behavior: scrollBehavior(), block: "start" });
-}
-
-/** Everything below the AI card follows the entity switcher. */
-function renderScoped() {
-  const { query, entities, focus } = state;
-  const scoped = scopeEvidence(query, focus);
-  state.scoped = scoped;
-
-  const numbers = headlineNumbers(scoped, entities, focus);
-  renderHeader($("entity-header"), { query, entities, focus, numbers, onFocus: setFocus });
+  const numbers = headlineNumbers(evidence, query.entity_type);
+  renderHeader($("entity-header"), { query, gene: queryGene(query), numbers });
   document.querySelectorAll("#section-nav [data-count]").forEach((span) => {
     span.textContent = numbers.counts[span.dataset.count] ?? "";
   });
 
-  table.setRows(interactionRows(scoped.table), {
-    items: new Map(scoped.items.map((i) => [i.id, i])),
-    availability: scoped.availability,
+  const items = evidence.items || [];
+  table.setRows(interactionRows(evidence.table || []), {
+    items: new Map(items.map((i) => [i.id, i])),
+    availability: evidence.australian_availability,
   });
   state.networkStale = true;
   if (state.view === "network") renderNetwork();
 
+  $("profile-title").textContent = query.entity_type === "drug" ? "Drug profile" : "Gene profile";
+  renderProfiles($("profiles"), items);
   const relations = query.relation_types || [];
-  renderPgx($("pgx"), scoped.items, { requested: !relations.length || relations.includes("snp") });
-  renderLiterature($("literature"), scoped.items);
-  renderAvailability($("availability"), scoped.availability);
-}
+  renderPgx($("pgx"), items, { requested: !relations.length || relations.includes("snp") });
+  renderLiterature($("literature"), items);
+  renderAvailability($("availability"), evidence.australian_availability);
 
-function setFocus(entity) {
-  state.focus = entity;
-  renderScoped();
+  (section || $("results")).scrollIntoView({ behavior: scrollBehavior(), block: "start" });
 }
 
 function renderNetwork() {
-  network.render(state.scoped?.network, Number($("edge-limit").value));
+  network.render(state.query?.evidence?.network, Number($("edge-limit").value));
   state.networkStale = false;
 }
 
@@ -160,37 +184,57 @@ function setView(view) {
 }
 
 /** Scroll to the row behind a citation (table, network, PGx or literature) and highlight it. */
-function revealEvidence(eid, retried = false) {
+function revealEvidence(eid) {
   const item = state.query?.evidence?.items?.find((i) => i.id === eid);
   if (!item) return;
   let target = null;
-  if (["interaction", "mechanism"].includes(item.kind)) {
-    if (state.view === "network" && network.focusEvidence(eid)) target = $("network");
-    else target = table.highlight(eid) || null;
-  } else {
+  if (state.query.entity_type === "vcf") {
+    target = vcfEvidenceTarget(eid);
+  } else if (state.view === "network" && ["interaction", "mechanism"].includes(item.kind) && network.focusEvidence(eid)) {
+    target = $("network");
+  } else if (["interaction", "mechanism"].includes(item.kind)) {
+    target = table.highlight(eid) || null;
+  } else { // PGx rows, papers and the profile card are .ev-row elements
     target = document.querySelector(`#results .ev-row[data-eid="${CSS.escape(eid)}"]`);
   }
-  if (!target && state.focus && !retried) {
-    setFocus(null); // narrowed away by the entity switcher
-    revealEvidence(eid, true);
+  if (!target) { // nothing on the page shows this item (e.g. papers in the VCF view): open its source instead
+    if (item.url) window.open(item.url, "_blank", "noopener");
     return;
   }
-  if (!target) return;
+  for (let d = target.closest("details"); d; d = d.parentElement?.closest("details")) d.open = true; // folded sections
   document.querySelectorAll("#results .highlight").forEach((n) => n.classList.remove("highlight"));
   if (target !== $("network")) target.classList.add("highlight");
   target.scrollIntoView({ behavior: scrollBehavior(), block: "center" });
 }
 
-$("search-form").addEventListener("submit", (event) => {
-  event.preventDefault();
+/** Stage 1: the gene was unknown or ambiguous. Picking a suggestion puts it in the search box and searches again.
+ *  "Search as typed" sends the name to the live sources unchanged. */
+function askToConfirm(problems) {
+  renderResolution($("resolution"), problems, {
+    onPick(input, suggestion) {
+      $("gene").value = suggestion.name;
+      search();
+    },
+    onSearchAsTyped: () => search({ confirm_unresolved: true }),
+  });
+  $("resolution").scrollIntoView({ behavior: scrollBehavior(), block: "nearest" });
+}
+
+function search(extra = {}) {
+  const type = state.entityType;
   const body = {
-    entities: $("entities").value,
-    entity_type: $("entity-type").value,
+    entity_type: type,
+    [type]: $("gene").value,
     relation_types: selectedRelations(),
     compare: $("compare").checked,
+    ...extra,
   };
-  withBusy([$("submit-btn")], "Fetching data from DGIdb / PharmGKB / PubTator / DrugBank and generating the report. This usually takes 20–60 seconds…",
-    () => api.explore(body));
+  withBusy([$("submit-btn")], `${SEARCH_MODES[type].busy} This usually takes 20–60 seconds…`, () => api.explore(body));
+}
+
+$("search-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  search();
 });
 
 $("ask-form").addEventListener("submit", (event) => {
@@ -203,29 +247,9 @@ $("ask-form").addEventListener("submit", (event) => {
 
 // Example chips fill in the search box; the user still presses Explore (a query takes 20–60 s and calls the LLMs).
 document.querySelectorAll(".example").forEach((chip) => chip.addEventListener("click", () => {
-  $("entities").value = chip.dataset.entities;
-  $("entity-type").value = chip.dataset.type;
-  $("panel-info").textContent = "";
+  $("gene").value = chip.dataset.name;
   $("submit-btn").focus();
 }));
-
-$("panel-file").addEventListener("change", async (event) => {
-  const [file] = event.target.files;
-  if (!file) return;
-  try {
-    const result = await api.parsePanel(file);
-    $("entities").value = result.genes.join(", ");
-    $("entity-type").value = "gene";
-    const notes = [`Read ${result.genes.length} genes`];
-    if (result.truncated) notes.push(`truncated to the limit of ${state.meta.limits.max_entities}`);
-    if (result.ignored.length) notes.push(`ignored: ${result.ignored.slice(0, 5).join(", ")}`);
-    $("panel-info").textContent = notes.join("; ");
-  } catch (err) {
-    $("panel-info").textContent = `Could not parse the file: ${err.message}`;
-  } finally {
-    event.target.value = "";
-  }
-});
 
 $("edge-limit").addEventListener("change", () => {
   if (state.query) renderNetwork();

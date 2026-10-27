@@ -1,0 +1,5 @@
+# Optional: MedCPT re-ranking for the Workflow 4 Literature agent (services/biomed/medcpt.py).
+# Without these, literature is ranked by keywords. The models (~1.3 GB) download on first use.
+-r requirements.txt
+torch>=2.4
+transformers>=4.44

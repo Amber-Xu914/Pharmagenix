@@ -1,0 +1,19 @@
+##fileformat=VCFv4.2
+##fileDate=20261018
+##source=Pharmagenix synthetic mock VCF (test data only; no real patient)
+##reference=GRCh38
+##contig=<ID=chr7,length=159345973>
+##contig=<ID=chr17,length=83257441>
+##FILTER=<ID=PASS,Description="All filters passed">
+##FILTER=<ID=weak_evidence,Description="Mutation does not meet likelihood threshold">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths for the ref and alt alleles">
+##FORMAT=<ID=AF,Number=A,Type=Float,Description="Allele fraction of the alt allele">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read depth">
+##normal_sample=NORMAL
+##tumor_sample=TUMOR
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	NORMAL	TUMOR
+chr7	55181378	.	C	T	.	PASS	.	GT:AD:AF:DP	0/0:60,0:0.000:60	0/1:104,56:0.350:160
+chr7	55181399	.	G	C	.	PASS	.	GT:AD:AF:DP	0/0:70,0:0.000:70	0/1:158,22:0.122:180
+chr7	55191822	.	T	G	.	PASS	.	GT:AD:AF:DP	0/0:60,0:0.000:60	0/1:104,56:0.350:160
+chr17	7673802	.	C	T	.	PASS	.	GT:AD:AF:DP	0/0:60,0:0.000:60	0/1:104,56:0.350:160

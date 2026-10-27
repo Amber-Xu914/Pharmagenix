@@ -50,6 +50,9 @@
           <!-- Shown when signed in -->
           <div id="user-menu" class="auth-panel hidden">
             <p class="small">Signed in as <strong id="user-email"></strong></p>
+            <p class="small history-head">My recent queries</p>
+            <ol id="history-list" class="history-list small"></ol>
+            <a id="admin-link" class="small hidden" href="/admin">Admin console →</a>
             <button id="logout-btn" class="secondary" type="button">Log out</button>
           </div>
         </div>
@@ -73,27 +76,34 @@
           </div>
         </div>
 
-        <form id="search-form" class="search-form">
+        <div class="mode-switch segmented" role="tablist" aria-label="Workflow">
+          <button type="button" role="tab" data-mode="gene" class="active" aria-selected="true">🧬 Gene → drugs</button>
+          <button type="button" role="tab" data-mode="drug" aria-selected="false">💊 Drug → genes</button>
+          <button type="button" role="tab" data-mode="vcf" aria-selected="false">🧪 Patient VCF → candidate drugs</button>
+        </div>
+
+        <form id="search-form" class="search-form" data-mode-pane="gene drug">
           <div class="searchbar">
             <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
-            <label for="entities" class="visually-hidden">Gene or drug name</label>
-            <input id="entities" type="text" autocomplete="off" required
-                   placeholder="Search a gene or drug, e.g. CYP2C19, BRAF or clopidogrel">
-            <select id="entity-type" aria-label="Entity type">
-              <option value="auto">Auto-detect</option>
-              <option value="gene">Gene</option>
-              <option value="drug">Drug</option>
-            </select>
+            <label for="gene" id="search-label" class="visually-hidden">Gene name</label>
+            <input id="gene" type="text" autocomplete="off" required
+                   placeholder="Search a gene, e.g. CYP2C19, BRAF or TPMT">
             <button id="submit-btn" type="submit">Explore</button>
           </div>
 
-          <div class="examples" aria-label="Example searches">
-            <button type="button" class="example" data-entities="CYP2C19" data-type="gene">CYP2C19</button>
-            <button type="button" class="example" data-entities="BRAF" data-type="gene">BRAF</button>
-            <button type="button" class="example" data-entities="TPMT" data-type="gene">TPMT</button>
-            <button type="button" class="example" data-entities="clopidogrel" data-type="drug">clopidogrel</button>
-            <button type="button" class="example" data-entities="warfarin" data-type="drug">warfarin</button>
-            <button type="button" class="example" data-entities="CYP2D6, codeine" data-type="auto">CYP2D6, codeine</button>
+          <div class="examples" aria-label="Example searches" data-examples="gene">
+            <button type="button" class="example" data-name="CYP2C19">CYP2C19</button>
+            <button type="button" class="example" data-name="CYP2D6">CYP2D6</button>
+            <button type="button" class="example" data-name="BRAF">BRAF</button>
+            <button type="button" class="example" data-name="TPMT">TPMT</button>
+            <button type="button" class="example" data-name="DPYD">DPYD</button>
+          </div>
+          <div class="examples hidden" aria-label="Example searches" data-examples="drug">
+            <button type="button" class="example" data-name="clopidogrel">clopidogrel</button>
+            <button type="button" class="example" data-name="Plavix">Plavix</button>
+            <button type="button" class="example" data-name="codeine">codeine</button>
+            <button type="button" class="example" data-name="osimertinib">osimertinib</button>
+            <button type="button" class="example" data-name="warfarin">warfarin</button>
           </div>
 
           <fieldset class="relations">
@@ -102,26 +112,65 @@
           </fieldset>
 
           <div class="options small">
-            <label class="file-btn">Upload gene panel (.txt / .csv / .tsv)
-              <input id="panel-file" type="file" accept=".txt,.csv,.tsv" hidden>
-            </label>
             <label class="chip"><input id="compare" type="checkbox"> <span id="compare-label">Generate comparison report (with Claude)</span></label>
           </div>
-          <p id="panel-info" class="panel-info muted small"></p>
+        </form>
+
+        <!-- Workflow 4: patient VCF + cancer type -> candidate drugs (js/vcf.js) -->
+        <form id="vcf-form" class="vcf-form hidden" data-mode-pane="vcf">
+          <p class="vcf-note small"><span class="test-badge">Test data only: synthetic mock VCFs, no real patients</span>
+            Lung cancer prototype. Upload a somatic VCF or pick a synthetic example.</p>
+          <div class="vcf-inputs">
+            <fieldset class="vcf-box">
+              <legend>Somatic VCF</legend>
+              <div class="vcf-source segmented" role="tablist" aria-label="Variant source">
+                <button type="button" role="tab" data-source="example" class="active" aria-selected="true">Synthetic example</button>
+                <button type="button" role="tab" data-source="upload" aria-selected="false">Upload VCF</button>
+              </div>
+              <div data-source-pane="example" class="stack">
+                <div id="vcf-examples" class="vcf-examples" role="radiogroup" aria-label="Synthetic mock VCFs"></div>
+              </div>
+              <div data-source-pane="upload" class="stack hidden">
+                <input id="vcf-file" type="file" accept=".vcf,.vcf.gz,.gz">
+                <span class="muted small">Tumour–normal paired calls (SNVs / small indels; .vcf or .vcf.gz) with DP / AD
+                  read counts for QC. Unannotated VCFs are annotated with Ensembl VEP.</span>
+                <label class="chip"><input id="vcf-test-data" type="checkbox"> I confirm this file is synthetic test data, not real patient data</label>
+              </div>
+            </fieldset>
+            <fieldset class="vcf-box">
+              <legend>Cancer type / subtype</legend>
+              <input id="vcf-cancer" type="text" list="vcf-cancer-list" autocomplete="off" aria-label="Cancer type / subtype"
+                     placeholder="Type or pick, e.g. LUAD, NSCLC, lung adenocarcinoma">
+              <datalist id="vcf-cancer-list"></datalist>
+              <span class="muted small">Type a name or OncoTree code, or pick from the list; it is mapped to an OncoTree
+                term. Lung cancer only in this prototype.</span>
+            </fieldset>
+          </div>
+          <div class="options small">
+            <label class="chip"><input id="vcf-compare" type="checkbox"> <span>Generate comparison report (with Claude)</span></label>
+            <button id="vcf-submit" type="submit">Predict candidate drugs</button>
+          </div>
+          <p id="vcf-ready" class="report-warning small hidden"></p>
         </form>
 
         <div id="status" class="status hidden" role="status"></div>
+        <!-- Stage 1: shown when the gene is unknown or ambiguous (js/workflow.js) -->
+        <div id="resolution" class="resolution hidden" role="alert"></div>
         <p id="data-version" class="data-version small muted hidden"></p>
       </div>
     </section>
   </div>
 
   <main id="results" class="container results hidden">
-    <!-- Entity header: what was searched, key identifiers and headline counts (js/profile.js) -->
+    <!-- Gene header: what was searched, key identifiers and headline counts (js/profile.js) -->
     <header id="entity-header" class="entity-header card"></header>
+
+    <!-- What each workflow stage did for this query (js/workflow.js) -->
+    <section id="workflow-trace" class="card workflow-card hidden" aria-label="Workflow stages"></section>
 
     <nav id="section-nav" class="section-nav" aria-label="Result sections">
       <a href="#sec-overview">Overview</a>
+      <a href="#sec-profile">Profile</a>
       <a href="#sec-interactions">Drug–gene interactions <span class="count" data-count="interactions"></span></a>
       <a href="#sec-pgx">Pharmacogenomics <span class="count" data-count="pgx"></span></a>
       <a href="#sec-literature">Literature <span class="count" data-count="literature"></span></a>
@@ -130,6 +179,8 @@
 
     <!-- AI answer first; the structured data it cites follows -->
     <section id="sec-overview" class="card section ai-card">
+      <!-- Rule-based "no known interaction" verdict; not written by the AI -->
+      <div id="verdict"></div>
       <div id="reports"></div>
 
       <details class="ask">
@@ -140,9 +191,14 @@
             <label class="chip"><input id="ask-compare" type="checkbox"> Generate comparison report (with Claude)</label>
             <button type="submit">Regenerate from current evidence</button>
           </div>
-          <p class="muted small">Existing data are reused when the entities and relationship types are unchanged. Use the search box at the top of the page to start a new query.</p>
+          <p class="muted small">Existing data are reused. Use the search box at the top of the page to search another gene.</p>
         </form>
       </details>
+    </section>
+
+    <section id="sec-profile" class="card section">
+      <div class="section-head"><h2 id="profile-title">Gene profile</h2></div>
+      <div id="profiles"></div>
     </section>
 
     <section id="sec-interactions" class="card section">
@@ -198,18 +254,91 @@
     </section>
   </main>
 
+  <!-- Workflow 4 results (js/vcf.js) -->
+  <main id="vcf-results" class="container results hidden">
+    <header id="vcf-header" class="entity-header card"></header>
+    <section id="vcf-trace" class="card workflow-card" aria-label="Workflow stages"></section>
+
+    <nav class="section-nav" aria-label="Result sections">
+      <a href="#vcf-sec-overview">Overview</a>
+      <a href="#vcf-sec-established">A. Established <span class="count" id="vcf-count-established"></span></a>
+      <a href="#vcf-sec-exploratory">B. Exploratory <span class="count" id="vcf-count-exploratory"></span></a>
+      <a href="#vcf-sec-comutations">Co-mutations</a>
+      <a href="#vcf-sec-network">Variant–drug network</a>
+      <a href="#vcf-sec-appendix">Appendix</a>
+      <a href="#vcf-sec-limits">Limitations</a>
+    </nav>
+
+    <section id="vcf-sec-overview" class="card section ai-card">
+      <div id="vcf-verdict"></div>
+      <div id="vcf-reports"></div>
+      <details class="ask">
+        <summary>Ask a follow-up or regenerate</summary>
+        <form id="vcf-ask-form" class="stack">
+          <textarea id="vcf-followup" rows="3" placeholder="For example: why is gefitinib down-ranked for this sample?"></textarea>
+          <div class="row">
+            <label class="chip"><input id="vcf-ask-compare" type="checkbox"> Generate comparison report (with Claude)</label>
+            <button type="submit">Regenerate from current evidence</button>
+          </div>
+          <p class="muted small">The stored evidence is reused; the uploaded file itself is not kept.</p>
+        </form>
+      </details>
+    </section>
+
+    <section id="vcf-sec-established" class="card section track-a">
+      <div class="section-head"><h2>A. Established clinical evidence</h2>
+        <span class="muted small">CIViC level A/B (OncoKB 1–2) in this cancer subtype, validated by the evidence tool</span></div>
+      <div id="vcf-established"></div>
+    </section>
+
+    <section id="vcf-sec-exploratory" class="card section track-b">
+      <div class="section-head"><h2>B. Exploratory predictions</h2>
+        <span class="muted small">Levels C–E, other cancer types, gene-level links, Tier 3 scores and agent hypotheses: not evidence of response</span></div>
+      <div id="vcf-exploratory"></div>
+      <div id="vcf-agents"></div>
+    </section>
+
+    <section id="vcf-sec-comutations" class="card section">
+      <div class="section-head"><h2>Co-mutations without a targeted drug</h2></div>
+      <div id="vcf-comutations"></div>
+    </section>
+
+    <section id="vcf-sec-network" class="card section">
+      <div class="section-head"><h2>Variant–drug network</h2>
+        <button id="vcf-network-fit" class="secondary small" type="button">Reset view</button></div>
+      <div id="vcf-network-legend" class="legend"></div>
+      <div id="vcf-network" class="network"></div>
+      <div id="vcf-network-info" class="network-info muted">Select a node or edge to view details.</div>
+    </section>
+
+    <section id="vcf-sec-appendix" class="card section">
+      <div class="section-head"><h2>Appendix</h2>
+        <span class="muted small">All tiered, low-priority and QC-filtered variants with reasons; the full drug lists</span></div>
+      <div id="vcf-appendix"></div>
+    </section>
+
+    <section id="vcf-sec-limits" class="card section">
+      <div class="section-head"><h2>Limitations</h2></div>
+      <div id="vcf-limits"></div>
+    </section>
+  </main>
+
   <section id="about" class="about">
     <div class="about-inner">
       <h2>About Pharmagenix</h2>
       <p>
-        Pharmagenix helps researchers and students explore how drugs and genes interact: which drugs inhibit, induce or
-        bind a gene's product, which genes metabolise a drug, and how genetic variants change a patient's response.
+        Pharmagenix helps researchers and students explore how drugs interact with a gene: which drugs inhibit, induce
+        or bind the gene's product, which drugs it metabolises, and how its genetic variants change a patient's response.
+        Search one gene to list every drug that interacts with it, or upload a tumour's somatic variants (VCF / MAF)
+        with its cancer type to get ranked candidate drugs for its actionable variants (lung cancer prototype,
+        synthetic test data only).
       </p>
       <p>
         Each search combines curated reference datasets (HGNC, ChEMBL, CPIC and the Australian PBS Schedule) with live
-        evidence from DGIdb, PharmGKB/ClinPGx, PubTator3 and DrugBank. A large language model then writes a summary in
-        which every claim cites its evidence. The table and network are built directly from the source data, never by
-        the model.
+        evidence from DGIdb, PharmGKB/ClinPGx, PubTator3, UniProt and DrugBank. The evidence for each gene–drug pair is
+        merged and graded by fixed rules, then a large language model writes a summary in which every claim cites its
+        evidence. When nothing is found, no summary is generated. The table and network are built directly from the
+        source data, never by the model.
       </p>
 
       <div class="features">
@@ -226,7 +355,7 @@
         <div class="feature">
           <span class="feature-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="7" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.3 7.6 15.6 6.4M7.2 9.2l3.6 6.6M16.9 8.3l-3.7 7.6"/></svg></span>
           <h3>Relationship network</h3>
-          <p>See how genes, drugs and variants connect.</p>
+          <p>See how the gene, its drugs and its variants connect.</p>
         </div>
         <div class="feature">
           <span class="feature-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(-35 12 12.5)"><rect x="2.5" y="9" width="19" height="7" rx="3.5"/><path d="M12 9v7"/></g></svg></span>
@@ -237,6 +366,6 @@
     </div>
   </section>
 
-  <footer>For research purposes only. This information is not clinical advice. Data sources: DGIdb · ChEMBL (CC BY-SA 3.0) · CPIC · PharmGKB/ClinPGx · PubTator3 · HGNC · PBS Schedule (© Commonwealth of Australia) · DrugBank</footer>
+  <footer>For research purposes only. This information is not clinical advice. Data sources: DGIdb · ChEMBL (CC BY-SA 3.0) · CPIC · PharmGKB/ClinPGx · PubTator3 · HGNC · UniProt (CC BY 4.0) · CIViC (CC0) · IntOGen (CC0) · OncoTree · cancerhotspots.org · Ensembl VEP · AlphaMissense · gnomAD · PBS Schedule (© Commonwealth of Australia) · DrugBank</footer>
 </body>
 </html>

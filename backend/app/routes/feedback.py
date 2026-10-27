@@ -1,5 +1,7 @@
 from flask import Blueprint, jsonify, request
 
+from .. import tracking
+from ..accounts import current_user_id
 from ..errors import APIError
 from ..extensions import db
 from ..models import Feedback, Report
@@ -21,7 +23,9 @@ def submit_feedback(report_id):
     if rating is None and not comment and not suggestion:
         raise APIError("Provide a rating, comment or suggestion")
 
-    feedback = Feedback(report=report, rating=rating, comment=comment, suggestion=suggestion)
+    feedback = Feedback(report=report, user_id=current_user_id(), rating=rating, comment=comment,
+                        suggestion=suggestion)
     db.session.add(feedback)
     db.session.commit()
+    tracking.log_feedback(report, rating, comment)  # MLflow: metric on the search's run, assessment on its trace
     return jsonify(feedback=feedback.to_dict(), report=report.to_dict()), 201

@@ -3,7 +3,7 @@
 import re
 
 from ..extensions import db
-from .models import CpicPair, CpicRecommendation, Drug, DrugMechanism, Gene, PbsItem, SourceRelease
+from .models import CpicPair, CpicRecommendation, Drug, DrugMechanism, Gene, PbsItem, PbsItemRestriction, PbsRestriction, SourceRelease
 from .text import norm, strip_salt
 
 CLASSIFICATION_ORDER = {"Strong": 0, "Moderate": 1, "Optional": 2}
@@ -57,7 +57,8 @@ def latest_releases():
     return {r.source: r for r in rows}
 
 
-def chembl_mechanisms(genes, drug_ids, limit=100):
+def chembl_mechanisms(genes, drug_ids, limit=100, pairs=()):
+    """pairs: (gene symbol, ChEMBL ID) the user asked about; their rows are always kept, whatever the limit."""
     if not genes and not drug_ids:
         return []
     conditions = []
@@ -65,10 +66,15 @@ def chembl_mechanisms(genes, drug_ids, limit=100):
         conditions.append(DrugMechanism.gene_symbol.in_(genes))
     if drug_ids:
         conditions.append(DrugMechanism.chembl_id.in_(drug_ids))
+    pair_rows = []
+    for gene, chembl_id in pairs:
+        pair_rows += db.session.scalars(db.select(DrugMechanism).where(
+            DrugMechanism.gene_symbol == gene, DrugMechanism.chembl_id == chembl_id)).all()
     rows = db.session.scalars(
         db.select(DrugMechanism).where(db.or_(*conditions))
         .order_by(DrugMechanism.max_phase.desc(), DrugMechanism.mec_id).limit(limit)
     ).all()
+    rows = list({r.id: r for r in pair_rows + list(rows)}.values())
     return [{
         "gene": r.gene_symbol,
         "drug": norm(r.drug_name or r.chembl_id),
@@ -85,7 +91,8 @@ def chembl_mechanisms(genes, drug_ids, limit=100):
     } for r in rows]
 
 
-def cpic_guidelines(genes, drug_names, drug_ids, per_pair=6, limit=30):
+def cpic_guidelines(genes, drug_names, drug_ids, per_pair=6, limit=30, pairs=()):
+    """pairs: (gene symbol, drug name) the user asked about; listed first so the limit never drops them."""
     conditions = []
     if genes:
         conditions.append(CpicPair.gene_symbol.in_(genes))
@@ -95,11 +102,13 @@ def cpic_guidelines(genes, drug_names, drug_ids, per_pair=6, limit=30):
         conditions.append(CpicPair.chembl_id.in_(drug_ids))
     if not conditions:
         return []
-    pairs = db.session.scalars(db.select(CpicPair).where(db.or_(*conditions))).all()
-    pairs = sorted(pairs, key=lambda p: CPIC_LEVEL_ORDER.get(p.cpic_level, 9))[:limit]
+    wanted = {(gene.upper(), norm(drug)) for gene, drug in pairs}
+    rows = db.session.scalars(db.select(CpicPair).where(db.or_(*conditions))).all()
+    rows = sorted(rows, key=lambda p: ((p.gene_symbol.upper(), p.drug_name_norm) not in wanted,
+                                       CPIC_LEVEL_ORDER.get(p.cpic_level, 9)))[:limit]
 
     out = []
-    for p in pairs:
+    for p in rows:
         recommendations = []
         if p.guideline_id:
             recs = db.session.scalars(db.select(CpicRecommendation).where(
@@ -133,7 +142,8 @@ def cpic_guidelines(genes, drug_names, drug_ids, per_pair=6, limit=30):
 
 
 def pbs_availability(drugs):
-    """drugs: [(display name, chembl_id or None)]. Returns listing status for each."""
+    """drugs: [(display name, chembl_id or None)]. Returns listing status for each, with the restrictions
+    (indication and criteria, as published) that apply to its items."""
     out = []
     for name, chembl_id in drugs:
         condition = PbsItem.drug_name_norm == strip_salt(name)
@@ -157,6 +167,31 @@ def pbs_availability(drugs):
             "pbs_listed": bool(items),
             "item_count": len(items),
             "items": list(items.values())[:12],
+            "restrictions": pbs_restrictions(list(items)),
             "effective_date": rows[0].effective_date.isoformat() if rows else None,
         })
     return out
+
+
+def pbs_restrictions(pbs_codes):
+    """The distinct restrictions on these PBS items, each with the item codes it applies to."""
+    if not pbs_codes:
+        return []
+    links = db.session.execute(
+        db.select(PbsItemRestriction, PbsRestriction)
+        .join(PbsRestriction, PbsRestriction.res_code == PbsItemRestriction.res_code)
+        .where(PbsItemRestriction.pbs_code.in_(pbs_codes))
+        .order_by(PbsRestriction.res_code, PbsItemRestriction.pbs_code)).all()
+    out = {}
+    for link, r in links:
+        entry = out.setdefault(r.res_code, {
+            "res_code": r.res_code,
+            "treatment_phase": r.treatment_phase,
+            "authority_method": r.authority_method,
+            "benefit_type": BENEFIT_TYPES.get(link.benefit_type_code, link.benefit_type_code),
+            "html": r.html_text,
+            "pbs_codes": [],
+        })
+        if link.pbs_code not in entry["pbs_codes"]:
+            entry["pbs_codes"].append(link.pbs_code)
+    return list(out.values())

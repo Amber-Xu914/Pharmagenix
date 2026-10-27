@@ -18,60 +18,55 @@ def test_meta_lists_reference_data(app, client):
 
 
 def test_explore_with_comparison(client, fake_sources):
-    resp = client.post("/api/explore", json={"entities": "CYP2C19, clopidogrel", "relation_types": ["snp"],
-                                             "compare": True})
+    resp = client.post("/api/explore", json={"gene": "CYP2C19", "relation_types": ["snp"], "compare": True})
     assert resp.status_code == 201
     data = resp.get_json()
     assert data["status"] == "complete"
-    assert data["entities"] == ["CYP2C19", "clopidogrel"]
+    assert (data["entities"], data["entity_type"]) == (["CYP2C19"], "gene")
     assert [r["role"] for r in data["reports"]] == ["primary", "comparison"]
     assert all(r["status"] == "success" for r in data["reports"])
     assert data["reports"][1]["citations"] == ["E1", "E2"]
-    assert len(data["evidence"]["table"]) == 2
+    assert len(data["evidence"]["table"]) == 1  # DGIdb + PharmGKB records for one pair, merged
 
 
 def test_query_includes_entity_details(app, client):
     from app.extensions import db
     from app.models import Query
-    from app.reference.models import Drug, Gene
+    from app.reference.models import Gene
 
-    db.session.add_all([
-        Gene(hgnc_id="HGNC:2625", symbol="CYP2D6", name="cytochrome P450 family 2 subfamily D member 6",
-             location="22q13.2", ensembl_gene_id="ENSG00000100197", uniprot_ids=["P10635"]),
-        Drug(chembl_id="CHEMBL485", pref_name="CODEINE", max_phase=4),
-    ])
-    normalisation = [
-        {"input": "CYP2D6", "name": "CYP2D6", "type": "gene", "id": "HGNC:2625"},
-        {"input": "codeine", "name": "CODEINE", "type": "drug", "id": "CHEMBL485"},
-        {"input": "xyz", "name": "XYZ", "type": None, "id": None},
+    db.session.add(Gene(hgnc_id="HGNC:2625", symbol="CYP2D6", name="cytochrome P450 family 2 subfamily D member 6",
+                        location="22q13.2", ensembl_gene_id="ENSG00000100197", uniprot_ids=["P10635"]))
+    queries = [
+        Query(entities=["cyp2d6"], relation_types=["snp"], status="complete", evidence={
+            "normalisation": [{"input": "cyp2d6", "name": "CYP2D6", "type": "gene", "id": "HGNC:2625"}]}),
+        Query(entities=["xyz"], relation_types=["snp"], status="complete", evidence={
+            "normalisation": [{"input": "xyz", "name": "XYZ", "type": None, "id": None}]}),
     ]
-    query = Query(entities=["CYP2D6", "codeine", "xyz"], relation_types=["snp"], status="complete",
-                  evidence={"normalisation": normalisation, "items": [], "table": []})
-    db.session.add(query)
+    db.session.add_all(queries)
     db.session.commit()
 
-    details = client.get(f"/api/queries/{query.id}").get_json()["entity_details"]
-    assert details[0]["location"] == "22q13.2"
-    assert details[0]["uniprot_ids"] == ["P10635"]
-    assert details[1]["max_phase"] == 4
-    assert details[2] is None
+    [details] = client.get(f"/api/queries/{queries[0].id}").get_json()["entity_details"]
+    assert (details["location"], details["uniprot_ids"]) == ("22q13.2", ["P10635"])
+    assert client.get(f"/api/queries/{queries[1].id}").get_json()["entity_details"] == [None]
 
 
 def test_explore_validation(client, fake_sources):
-    assert client.post("/api/explore", json={"entities": ""}).status_code == 400
-    assert client.post("/api/explore", json={"entities": "BRAF", "relation_types": ["nope"]}).status_code == 400
-    assert client.post("/api/explore", json={"entities": "BRAF", "entity_type": "x"}).status_code == 400
+    assert client.post("/api/explore", json={"gene": ""}).status_code == 400
+    assert client.post("/api/explore", json={"gene": ["BRAF"]}).status_code == 400
+    assert client.post("/api/explore", json={"gene": "BRAF, EGFR"}).status_code == 400  # one gene at a time
+    assert client.post("/api/explore", json={"gene": "BRAF", "relation_types": ["nope"]}).status_code == 400
+    assert fake_sources["calls"]["collect"] == 0
 
 
 def test_hallucinated_citation_is_flagged(client, fake_sources):
     fake_sources["answers"]["openai"] = "Claim [E1] and made-up [E42]."
-    report = client.post("/api/explore", json={"entities": ["BRAF"]}).get_json()["reports"][0]
+    report = client.post("/api/explore", json={"gene": "BRAF"}).get_json()["reports"][0]
     assert report["status"] == "flagged"
     assert report["invalid_citations"] == ["E42"]
 
 
 def test_followup_reuses_evidence(client, fake_sources):
-    first = client.post("/api/explore", json={"entities": ["CYP2C19"]}).get_json()
+    first = client.post("/api/explore", json={"gene": "CYP2C19"}).get_json()
     resp = client.post(f"/api/queries/{first['id']}/ask", json={"followup_question": "What about *17?"})
     assert resp.status_code == 201
     second = resp.get_json()
@@ -81,16 +76,34 @@ def test_followup_reuses_evidence(client, fake_sources):
 
 
 def test_feedback(client, fake_sources):
-    report_id = client.post("/api/explore", json={"entities": ["BRAF"]}).get_json()["reports"][0]["id"]
+    report_id = client.post("/api/explore", json={"gene": "BRAF"}).get_json()["reports"][0]["id"]
     resp = client.post(f"/api/reports/{report_id}/feedback", json={"rating": 4, "suggestion": "More SNPs"})
     assert resp.status_code == 201
     assert resp.get_json()["report"]["avg_rating"] == 4
     assert client.post(f"/api/reports/{report_id}/feedback", json={"rating": 9}).status_code == 400
 
 
-def test_panel_upload(client):
-    from io import BytesIO
 
-    resp = client.post("/api/panels/parse", data={"file": (BytesIO(b"GENE\nBRAF\nEGFR\n"), "panel.txt")},
-                       content_type="multipart/form-data")
-    assert resp.get_json()["genes"] == ["BRAF", "EGFR"]
+def test_explore_a_drug(client, fake_sources, monkeypatch):
+    import app.services.explorer as explorer
+    from app.models import PromptLog
+
+    patched, seen = explorer.collect_evidence, {}
+
+    def recording(name, relation_types, resolved=None, entity_type="gene"):
+        seen["args"] = (name, entity_type)
+        return patched(name, relation_types, resolved, entity_type)
+
+    monkeypatch.setattr(explorer, "collect_evidence", recording)
+    data = client.post("/api/explore", json={"entity_type": "drug", "drug": "clopidogrel"}).get_json()
+    assert seen["args"] == ("clopidogrel", "drug")
+    assert (data["entities"], data["entity_type"]) == (["clopidogrel"], "drug")
+    prompt = PromptLog.query.order_by(PromptLog.id.desc()).first().user_prompt
+    assert prompt.startswith("Drug: clopidogrel") and "## Genes that interact with clopidogrel" in prompt
+    # a follow-up keeps the entity type
+    follow = client.post(f"/api/queries/{data['id']}/ask", json={"followup_question": "Which genes matter most?"})
+    assert follow.get_json()["entity_type"] == "drug"
+
+
+def test_explore_rejects_unknown_entity_type(client):
+    assert client.post("/api/explore", json={"entity_type": "protein", "protein": "x"}).status_code == 400
