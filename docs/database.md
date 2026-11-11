@@ -18,9 +18,10 @@ generated the same way (`flask --app run dump-er`), so neither can drift from th
 erDiagram
     queries |o--o{ queries : "parent_id (follow-up of)"
     users ||--o{ queries : "user_id"
+    queries ||--o{ query_drug_interactions : "query_id"
     queries ||--o{ query_interactions : "query_id"
-    queries ||--o{ reports : "query_id"
     prompt_templates ||--o{ reports : "template_id"
+    queries ||--o{ reports : "query_id"
     reports ||--o{ citations : "report_id"
     reports ||--o{ feedback : "report_id"
     users ||--o{ feedback : "user_id"
@@ -29,6 +30,7 @@ erDiagram
     reports ||--o{ prompt_logs : "report_id"
     genes ||..o{ query_interactions : "hgnc_id (logical)"
     drugs ||..o{ query_interactions : "chembl_id (logical)"
+    drugs ||..o{ query_drug_interactions : "chembl_id (logical)"
     prompt_templates {
         int id PK
         varchar name
@@ -59,6 +61,19 @@ erDiagram
         varchar status
         text error_message
         datetime created_at
+    }
+    query_drug_interactions {
+        int id PK
+        int query_id FK
+        varchar evidence_id
+        varchar drug_name
+        varchar chembl_id
+        varchar other_drug_name
+        varchar other_chembl_id
+        varchar context
+        varchar severity
+        varchar mechanism
+        varchar rule
     }
     query_interactions {
         int id PK
@@ -155,6 +170,7 @@ erDiagram
 | `prompt_templates` | template version | Editable prompt templates; editing creates a new version so old reports stay reproducible |
 | `prompt_logs` | LLM call | The exact prompt sent and raw response received, including failures (admin console) |
 | `feedback` | rating | A user's rating (1–5), comment and suggestion for a report. *User_Feedback* |
+| `query_drug_interactions` | drug–drug interaction alert of a search | The interactions the safety check flagged: the drug and the other drug (name and ChEMBL ID), the context (current medication or combination regimen), severity, mechanism and the rule that found it |
 
 ## Reference datasets
 
@@ -163,6 +179,7 @@ erDiagram
 erDiagram
     clinpgx_guidelines ||--o{ clinpgx_guideline_pairs : "guideline_id"
     drugs ||--o{ drug_synonyms : "chembl_id"
+    drugs ||--o{ drug_warnings : "chembl_id"
     genes ||--o{ gene_aliases : "hgnc_id"
     genes ||..o{ drug_mechanisms : "hgnc_id (logical)"
     genes ||..o{ gene_pathways : "gene_symbol (logical)"
@@ -170,6 +187,8 @@ erDiagram
     pbs_items ||..o{ pbs_item_restrictions : "pbs_code (logical)"
     genes ||..o{ civic_evidence : "gene_symbol (logical)"
     drugs ||..o{ cpic_pairs : "chembl_id (logical)"
+    drugs ||..o{ drug_cyp_roles : "chembl_id (logical)"
+    genes ||..o{ drug_cyp_roles : "hgnc_id (logical)"
     cancer_hotspots {
         int id PK
         varchar gene_symbol
@@ -344,6 +363,19 @@ erDiagram
         varchar category
         varchar source_db
     }
+    drug_cyp_roles {
+        int id PK
+        varchar drug_name
+        varchar drug_name_norm
+        varchar chembl_id
+        varchar system
+        varchar pathway
+        varchar gene_symbol
+        varchar hgnc_id
+        varchar role
+        varchar strength
+        text notes
+    }
     drug_mechanisms {
         int id PK
         int mec_id
@@ -481,6 +513,17 @@ erDiagram
         varchar synonym_norm
         varchar syn_type
     }
+    drug_warnings {
+        int id PK
+        int warning_id
+        varchar chembl_id FK
+        varchar warning_type
+        varchar warning_class
+        text description
+        varchar country
+        int year
+        json refs
+    }
     gene_aliases {
         int id PK
         varchar hgnc_id FK
@@ -495,6 +538,12 @@ IDs; every name that should resolve to it (approved symbol, previous symbols, al
 (~106k). `drugs` (ChEMBL, ~5.6k) and `drug_synonyms` (~58k, including trade names) work the same way.
 `gene_pathways` gives each gene's oncogenic signalling pathways. Each dataset's import is recorded in
 `source_releases` with its version, so every piece of local evidence can be traced to a data release.
+
+Two tables feed the drug safety checks (`services/safety.py`). `drug_warnings` (ChEMBL) holds each drug's
+withdrawals (year, countries, toxicity class) and boxed warnings, one row per ChEMBL warning, with a foreign key to
+`drugs`. `drug_cyp_roles` (FDA "Examples of Drugs that Interact with CYP Enzymes and Transporter Systems", ~420
+rows) holds one row per drug, pathway and role: e.g. paroxetine | CYP2D6 | inhibitor | strong, or midazolam | CYP3A |
+substrate | sensitive. The FDA names CYP3A as one pathway; it is linked to the gene CYP3A4.
 
 ## Normalisation
 
@@ -537,7 +586,7 @@ interactions; `ON DELETE SET NULL` from a deleted user, so their searches stay f
   `subtype_gene_frequencies`, `gene_pathways`, the `cpic_*` allele tables) store each dataset with the identifiers
   its source publishes. They are read-only copies, replaced as a whole on re-import and versioned in
   `source_releases`, so the repeated symbols cannot drift apart through updates. Where a source gives HGNC IDs they
-  are stored as well (`cpic_pairs`, `drug_mechanisms`, `fda_pgx_biomarkers`, `clinpgx_*`); the links to `genes`
+  are stored as well (`cpic_pairs`, `drug_mechanisms`, `fda_pgx_biomarkers`, `drug_cyp_roles`, `clinpgx_*`); the links to `genes`
   are logical (dotted in the ER diagram).
 - **`queries.entities` / `relation_types` (JSON)** are short lists (one gene, a few relation types) that are always
   read and written together with their query.
@@ -552,6 +601,25 @@ FROM query_interactions qi
 JOIN queries q ON q.id = qi.query_id
 LEFT JOIN genes g ON g.hgnc_id = qi.hgnc_id
 WHERE qi.gene_symbol = 'EGFR' AND qi.drug_name = 'OSIMERTINIB';
+```
+
+The clinically classified CYP2D6 inhibitors (the brief's example question), strongest first:
+
+```sql
+SELECT r.drug_name, r.strength, d.pref_name, d.max_phase
+FROM drug_cyp_roles r LEFT JOIN drugs d ON d.chembl_id = r.chembl_id
+WHERE r.gene_symbol = 'CYP2D6' AND r.role = 'inhibitor' AND r.strength IN ('strong', 'moderate')
+ORDER BY FIELD(r.strength, 'strong', 'moderate'), r.drug_name;
+```
+
+Which current medications cause the most interaction alerts, by severity?
+
+```sql
+SELECT di.other_drug_name, di.severity, COUNT(*) AS alerts, COUNT(DISTINCT di.query_id) AS searches
+FROM query_drug_interactions di
+WHERE di.context = 'current medication'
+GROUP BY di.other_drug_name, di.severity
+ORDER BY alerts DESC;
 ```
 
 How often does each model cite evidence that was not in its prompt?

@@ -291,6 +291,8 @@ def run_evaluation(app, llm=False, cases=None):
     template = get_active_template("vcf") if llm else None
     # MLflow would otherwise run the first case an extra time to check that it is traced (another LLM call).
     os.environ.setdefault("MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION", "true")
+    # One case at a time: loading the MedCPT models (PyTorch) in MLflow's worker threads crashes on macOS.
+    os.environ.setdefault("MLFLOW_GENAI_EVAL_MAX_WORKERS", "1")
     tracking._state["evaluating"] = True  # each case is a row of this run, not a run of its own
     try:
         with mlflow.start_run(run_name=f"eval {'full (LLM)' if llm else 'deterministic'} · {len(data)} cases"):

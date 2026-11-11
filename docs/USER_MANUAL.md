@@ -94,13 +94,37 @@ side:
 Try **clopidogrel**: CYP2C19 comes out as the strongest pair (CPIC level A, SNP-specific response), matching the
 CPIC guideline. **codeine** gives CYP2D6.
 
+## 💊 Current medications and drug safety
+
+Every search form has an optional **Current medications** field (comma-separated, generic or brand names, e.g.
+`omeprazole, fluoxetine`). The results page then has a **Drug safety** section:
+
+- **Interactions**: each drug of the result checked against the medications, with a severity badge (*major*: avoid or
+  change the combination; *moderate*: monitor or adjust the dose; *minor*), the finding, the quoted sentence from the
+  drug's FDA label and the source. A *phenoconversion* alert means the medication inhibits a gene the drug has a CPIC
+  guideline for: for example fluoxetine makes a CYP2C19 normal metaboliser respond like a poor metaboliser to
+  clopidogrel, so the genotype-based recommendation may not apply.
+- **Warnings** (ChEMBL): withdrawn drugs and boxed warnings, also shown as badges in the interaction table.
+
+In the VCF workflow the drugs inside each combination regimen are always checked against each other. Interactions are
+flagged, not used to re-rank: change the co-medication or adjust the dose. Withdrawn drugs are down-ranked. Try it:
+search **Plavix** with current medications `omeprazole, fluoxetine`, or run the EGFR L858R + T790M example with
+`carbamazepine`.
+
+The check covers pharmacokinetic interactions found in FDA labels and the FDA CYP / transporter table; it is not a
+complete interaction checker (additive toxicity, QT prolongation and food interactions are not covered).
+
 ## 🧪 Patient VCF → candidate drugs
 
 1. Select **Patient VCF → candidate drugs**.
 2. Pick one of the eight synthetic examples, or upload your own VCF / MAF file and tick **I confirm this file is
    synthetic test data**.
 3. Choose the cancer type (e.g. LUAD; you can also type "lung adenocarcinoma").
-4. Press **Predict candidate drugs**. This takes about 30–90 seconds.
+4. Optionally enter **Current medications** and open **Clinical context** (stage, treatment status, age, sex,
+   smoking, tumour purity, ECOG, brain metastases, other context). The clinical context is used only by the Clinical
+   summary agent and the Word report; it never changes QC, tiers or scores. Fields left empty are listed in the report
+   as "not provided".
+5. Press **Predict candidate drugs**. This takes about 30–90 seconds.
 
 | Example | Cancer type | What it shows |
 | --- | --- | --- |
@@ -115,7 +139,11 @@ CPIC guideline. **codeine** gives CYP2D6.
 
 The results page has:
 
-- **Overview**: the workflow trace and the Analysis agent's report.
+- **Overview**: the workflow trace, the Analysis agent's report and the **Clinical summary** (AI): recommended
+  first-line options, drugs not recommended, what to confirm before treating, the regimen comparison table and a
+  monitoring plan. Statements cite evidence ([E3]) or are marked **[GK]**: general clinical knowledge (e.g. a standard
+  chemotherapy partner or a monitoring interval) that is not in the retrieved evidence and must be checked against
+  current guidelines. A check flags the summary if it recommends a down-ranked drug or a regimen containing one.
 - **A. Established clinical evidence**: drugs with CIViC level A/B (or OncoKB level 1–2) evidence in this cancer
   type, with the score breakdown, PBS status and references. **Drugs to avoid** lists drugs with resistance evidence
   only.
@@ -155,19 +183,24 @@ How to interpret it:
 
 ## Downloading a report (.docx)
 
-Every results page (gene, drug or patient VCF) has **Download report (.docx)** at the top of the overview. It saves a
-Word document in the style of a short research report:
+Every results page (gene, drug or patient VCF) has **Download report (.docx)** at the top of the overview. All reports
+follow the same structure (the team's *Candidate Drug Report*, see `docs/report_templates`):
 
-- an abstract (objective, methods, results, conclusion) and the methods actually used for this search: the data
-  sources with their versions and record counts, and the grading or tiering rules;
-- the results tables (graded drug–gene pairs, CPIC guidelines, PharmGKB annotations and PBS listing; or, for a VCF,
-  the tiered variants and the established and exploratory tracks), and the network as Figure 1;
-- the LLM report as the Discussion, marked as machine-written, with its evidence IDs turned into numbered references;
-- the reference list, and appendices with the QC audit (VCF) and the query's provenance (time, models, prompt
-  template versions, citation checks).
+- **Page 1**: a case table (patient VCF: sample, cancer type, clinical context, medications, what was not provided;
+  gene / drug: the query and data sources) and **Brief Results** (VCF: recommended options, not recommended, confirm
+  before treating, co-mutations, at progression).
+- **Abstract**, **1 Introduction**, **2 Methodology** (QC, tiering, evidence levels, tracks, scoring and safety rules,
+  with worked score examples), **3 Results** (QC steps, variants, the variant × drug evidence heat map as Figure 1,
+  established and exploratory tracks with a score heat map, co-mutations and the network), **4 Interpretation** (the
+  Analysis agent; for a VCF also the regimen table and monitoring plan from the Clinical summary agent),
+  **5 Limitations**, **6 Conclusion** and **References** (the evidence cited plus the methods and databases used).
+- **Appendices**: the exploration agents' notes and the QC audit (VCF), and the sources and provenance of the query
+  (time, models, prompt template versions, citation checks).
 
-Everything except the Discussion is built from the stored results by fixed rules, so the document always matches the
-page and can be downloaded again later from **My recent queries**. File name: `Pharmagenix_report_PGX-<query>_<gene>.docx`.
+Gene → drugs and Drug → genes reports use the same skeleton with the sections that apply (graded pairs, evidence heat
+map, CPIC, PharmGKB, PBS). Everything except the text marked as written by a language model is built from the stored
+results by fixed rules, so the document always matches the page and can be downloaded again later from **My recent
+queries**. [GK] statements stay marked in the document. File name: `Pharmagenix_report_PGX-<query>_<gene>.docx`.
 
 ## Feedback and follow-up questions
 
@@ -214,5 +247,7 @@ Open <http://127.0.0.1:5001/admin> while logged in as the administrator (or ente
 | "OncoKB not enabled" | No `ONCOKB_API_TOKEN` in `backend/.env`; CIViC is used alone. |
 | "PBS data has not been imported" | Run `flask --app run import-data pbs`. |
 | Comparison report: "API key not configured" | Add `OPENAI_API_KEY` to `backend/.env`. |
+| Drug safety: "openFDA … failed" | The FDA label service did not answer (or the 1,000-a-day limit without a key was reached). The FDA-table and CPIC rules still ran; set `OPENFDA_API_KEY` or run `warm-cache` before a demo. |
+| No drug warnings anywhere | The ChEMBL import predates the warnings: run `flask --app run import-data chembl`. |
 | ISM section: "AlphaGenome is not configured on this server" | Add `ALPHAGENOME_API_KEY` to `backend/.env` and run `pip install -r requirements-alphagenome.txt`, then restart. |
 | ISM heatmap: "AlphaGenome request failed" | The AlphaGenome service is down or the key's quota is used up. The rest of the report is unaffected; try again later. |

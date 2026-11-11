@@ -4,12 +4,14 @@ drifts from the schema. Two diagrams: the application tables, and the reference 
 from .extensions import db
 
 APP_TABLES = ["users", "queries", "reports", "citations", "prompt_logs", "prompt_templates", "feedback",
-              "query_interactions"]
+              "query_interactions", "query_drug_interactions"]
 # Logical references without a declared foreign key (reference tables are replaced wholesale on import).
 LOGICAL = [("query_interactions", "genes", "hgnc_id"), ("query_interactions", "drugs", "chembl_id"),
            ("drug_mechanisms", "genes", "hgnc_id"), ("gene_pathways", "genes", "gene_symbol"),
            ("pbs_item_restrictions", "pbs_restrictions", "res_code"), ("pbs_item_restrictions", "pbs_items", "pbs_code"),
-           ("civic_evidence", "genes", "gene_symbol"), ("cpic_pairs", "drugs", "chembl_id")]
+           ("civic_evidence", "genes", "gene_symbol"), ("cpic_pairs", "drugs", "chembl_id"),
+           ("drug_cyp_roles", "drugs", "chembl_id"), ("drug_cyp_roles", "genes", "hgnc_id"),
+           ("query_drug_interactions", "drugs", "chembl_id")]
 
 
 def _type(column):

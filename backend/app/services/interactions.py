@@ -6,7 +6,7 @@ them to the genes / drugs reference tables by HGNC and ChEMBL ID.
 """
 
 from ..extensions import db
-from ..models import QueryInteraction
+from ..models import QueryDrugInteraction, QueryInteraction
 from ..reference.models import DrugSynonym, GeneAlias
 from ..reference.text import norm, strip_salt
 
@@ -28,6 +28,8 @@ def _pairs(item):
         gene = (item.get("molecular_profile") or "").split(" ")[0]
         for drug in item.get("therapies") or []:
             yield gene, drug, item.get("significance"), item.get("level"), None
+    elif kind == "fda_cyp":  # FDA CYP / transporter table
+        yield item.get("gene"), item.get("drug"), item.get("label"), item.get("strength"), None
     elif kind == "oncokb":
         for drug in (item.get("drug") or "").split(" + "):
             yield item.get("gene"), drug, item.get("significance"), item.get("level"), None
@@ -66,3 +68,13 @@ def _link_ids(rows):
 def record_interactions(query):
     """Replace the query's rows with those of its current evidence (the caller commits)."""
     query.interactions = [QueryInteraction(**row) for row in interaction_rows(query.evidence)]
+    query.drug_interactions = [QueryDrugInteraction(**row) for row in drug_interaction_rows(query.evidence)]
+
+
+def drug_interaction_rows(evidence):
+    """One row per drug–drug interaction alert (evidence["safety"]["interactions"])."""
+    return [{"evidence_id": a["evidence_id"], "drug_name": a["drug"][:255], "chembl_id": a.get("chembl_id"),
+             "other_drug_name": a["other"][:255], "other_chembl_id": a.get("other_chembl_id"),
+             "context": a["context"], "severity": a["severity"], "mechanism": (a.get("mechanism") or "")[:255] or None,
+             "rule": a["rule"]}
+            for a in ((evidence or {}).get("safety") or {}).get("interactions") or [] if a.get("evidence_id")]

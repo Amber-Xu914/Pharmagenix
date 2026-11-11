@@ -101,3 +101,62 @@ def test_tracking_off_is_a_no_op(monkeypatch):
     monkeypatch.setattr(tracking, "_state", {"enabled": False, "prefix": "", "artifacts": True, "experiments": {}})
     with tracking.track_search("gene", "BRAF", {}) as handle, tracking.span("stage") as s:
         assert handle is None and s is None
+
+
+def test_benchmark_scores_grounded_and_ungrounded_reports(app, vcf_reference, stub_live, monkeypatch, tmp_path):
+    """The benchmark on one mock VCF with fake models: grounded reports cite evidence IDs, the ungrounded one PMIDs
+    (one real, one made up); the metrics, the paired summary and the output files."""
+    import json
+
+    from app import benchmark
+
+    answers = {
+        "openai": ("## Overview\nOsimertinib is the established option for EGFR p.L858R with T790M in this sample [E1, E2].\n"
+                   "Gefitinib is down-ranked because T790M confers resistance to it [E1].\nAn unknown claim cites a "
+                   "missing record of evidence here [E999]."),
+        "anthropic": ("## Overview\nOsimertinib is the established option for EGFR p.L858R with T790M in this sample [E1].\n"
+                      "Gefitinib remains a strong first-line choice for these EGFR variants in practice [E2]."),
+    }
+
+    class Fake:
+        enabled = True
+        max_tokens, timeout = 4000, 90  # like LLMClient
+
+        def __init__(self, provider):
+            self.provider = provider
+
+        def complete(self, system, user):
+            from app.services.llm import LLMResult
+            text = answers[self.provider] if "Evidence" in user else (
+                "## Overview\nOsimertinib is used for EGFR T790M lung cancer as shown in a large trial "
+                "[PMID 25923549].\nErlotinib is another option with good responses in these patients [PMID 99999999].")
+            return LLMResult(text=text, model=f"fake-{self.provider}", input_tokens=10, output_tokens=20, latency_ms=5)
+
+    monkeypatch.setattr("app.services.llm.get_llm_client", lambda provider: Fake(provider))
+    monkeypatch.setattr(benchmark, "_pubmed_titles", lambda pmids: {"25923549": "Osimertinib in EGFR T790M lung cancer"})
+    monkeypatch.setattr(benchmark, "_drug_dictionary", lambda: {"OSIMERTINIB": "C1", "GEFITINIB": "C2", "ERLOTINIB": "C3"})
+    summary = benchmark.run(only=["mock_luad_egfr_l858r_t790m"], echo=lambda *a: None, out_dir=tmp_path)
+
+    rows = {r["arm"]: r for r in __import__("csv").DictReader(open(tmp_path / "benchmark_cases.csv"))}
+    assert set(rows) == set(benchmark.ARMS)
+    # TestConfig: primary = openai, comparison = anthropic
+    assert float(rows["grounded-primary"]["citation_validity"]) == 3 / 4      # E999 was not in the prompt
+    assert float(rows["grounded-comparison"]["citation_validity"]) == 1.0
+    assert float(rows["ungrounded-primary"]["citation_validity"]) == 0.5      # one PMID does not exist
+    assert float(rows["ungrounded-primary"]["pmid_on_topic"]) == 1.0
+    assert rows["grounded-primary"]["unsafe_mentions"] == "0"                 # "down-ranked ... resistance"
+    assert rows["grounded-comparison"]["unsafe_mentions"] == "1"              # gefitinib named without a warning
+    assert float(rows["grounded-primary"]["gold_recall"]) == 1.0              # osimertinib is the expected drug
+    assert summary["arms"]["grounded-primary"]["sentence_coverage"]["n"] == 1
+    assert (tmp_path / "benchmark.md").read_text().startswith("# Benchmark")
+    assert {r["arm"] for r in json.loads((tmp_path / "benchmark_reports.json").read_text())} == set(benchmark.ARMS)
+
+    # Re-running one arm with a higher output limit keeps the other arms' reports and re-scores them together
+    before = {r["arm"]: r["text"] for r in json.loads((tmp_path / "benchmark_reports.json").read_text())}
+    benchmark.run(arms=["ungrounded-primary"], only=["mock_luad_egfr_l858r_t790m"], echo=lambda *a: None,
+                  out_dir=tmp_path, max_tokens=8000)
+    after = {r["arm"]: r for r in json.loads((tmp_path / "benchmark_reports.json").read_text())}
+    assert set(after) == set(benchmark.ARMS)
+    assert after["grounded-primary"]["text"] == before["grounded-primary"]
+    assert after["ungrounded-primary"]["max_tokens"] == 8000 and after["grounded-primary"]["max_tokens"] == 4000
+    assert "| ungrounded-primary | 8,000 | 0 of 1 |" in (tmp_path / "benchmark.md").read_text()

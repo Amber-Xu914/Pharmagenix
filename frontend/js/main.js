@@ -5,6 +5,7 @@ import {
   headlineNumbers, interactionRows, pgxAlerts, queryGene, renderAlerts, renderHeader, renderLiterature, renderPgx,
 } from "./profile.js";
 import { downloadReport } from "./report.js";
+import { medicationList, renderSafety } from "./safety.js";
 import { renderReports } from "./summary.js";
 import { DgiTable } from "./table.js";
 import { categoryColor, el } from "./util.js";
@@ -167,6 +168,12 @@ function showQuery(query, { hash = "" } = {}) {
   renderPgx($("pgx"), items, { requested: !relations.length || relations.includes("snp") });
   renderLiterature($("literature"), items);
   renderAvailability($("availability"), evidence.australian_availability);
+  const seen = new Set();
+  const warned = (evidence.table || []).filter((r) => r.warnings?.length && !seen.has(r.drug) && seen.add(r.drug))
+    .map((r) => ({ drug: r.drug, warnings: r.warnings }));
+  if (evidence.safety?.drug_warnings?.length) warned.unshift({ drug: query.entities[0], warnings: evidence.safety.drug_warnings });
+  const nSafety = renderSafety($("safety"), evidence, { warned, formHint: "add them under the search box to check interactions" });
+  document.querySelector('[data-count="safety"]').textContent = nSafety + warned.length || "";
 
   (section || $("results")).scrollIntoView({ behavior: scrollBehavior(), block: "start" });
 }
@@ -198,7 +205,7 @@ function revealEvidence(eid) {
     target = vcfEvidenceTarget(eid);
   } else if (state.view === "network" && ["interaction", "mechanism"].includes(item.kind) && network.focusEvidence(eid)) {
     target = $("network");
-  } else if (["interaction", "mechanism"].includes(item.kind)) {
+  } else if (["interaction", "mechanism", "fda_cyp"].includes(item.kind)) {
     target = table.highlight(eid) || null;
   } else { // PGx rows, papers and the profile card are .ev-row elements
     target = document.querySelector(`#results .ev-row[data-eid="${CSS.escape(eid)}"]`);
@@ -233,6 +240,7 @@ function search(extra = {}) {
     [type]: $("gene").value,
     relation_types: selectedRelations(),
     compare: $("compare").checked,
+    medications: medicationList($("medications")),
     ...extra,
   };
   withBusy([$("submit-btn")], `${SEARCH_MODES[type].busy} This usually takes 20–60 seconds…`, () => api.explore(body));

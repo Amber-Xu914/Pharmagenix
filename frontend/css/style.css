@@ -752,3 +752,27 @@ footer { text-align: center; color: var(--muted); font-size: 0.8rem; padding: 20
 
 /* Word report download, top right of the overview card */
 .report-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-bottom: 8px; }
+
+/* Drug safety: severity badges, warnings, the interactions table */
+.sev-badge { display: inline-block; padding: 1px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 700;
+  text-transform: capitalize; white-space: nowrap; border: 1px solid currentColor; }
+.sev-badge.major { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.sev-badge.moderate { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.sev-badge.minor { color: var(--muted); }
+.ev-badge.withdrawn { color: var(--danger); border-color: var(--danger); }
+.ev-badge.boxed { color: var(--warn); border-color: var(--warn); }
+.note-ddi { margin-top: 2px; }
+.note-ddi.major { color: var(--danger); }
+.note-ddi.moderate { color: var(--warn); }
+.safety-table td { vertical-align: top; }
+.label-quote { margin: 4px 0 0; padding: 4px 8px; border-left: 3px solid var(--border); color: var(--muted); font-style: italic; }
+.meds-field { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+.meds-field input { width: 100%; }
+
+/* Optional clinical context on the VCF form */
+.clinical-fields { margin-top: 10px; }
+.clinical-fields summary { cursor: pointer; color: var(--muted); }
+.clinical-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 12px; margin-top: 8px; }
+.clinical-grid label { display: flex; flex-direction: column; gap: 3px; }
+.clinical-grid .wide { grid-column: 1 / -1; }
+#vcf-clinical:not(:empty) { margin-top: 14px; }

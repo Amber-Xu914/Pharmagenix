@@ -93,6 +93,16 @@ class Config:
     FDA_BIOMARKERS_URL = os.getenv(
         "FDA_BIOMARKERS_URL",
         "https://www.fda.gov/drugs/science-and-research-drugs/table-pharmacogenomic-biomarkers-drug-labeling")
+    FDA_DDI_TABLE_URL = os.getenv(
+        "FDA_DDI_TABLE_URL",
+        "https://www.fda.gov/drugs/drug-interactions-labeling/"
+        "healthcare-professionals-fdas-examples-drugs-interact-cyp-enzymes-and-transporter-systems")
+    # Drug safety checks (services/safety.py): drug labels from openFDA (free; an optional key raises the daily limit
+    # from 1,000 requests per IP), drug–drug interactions and ChEMBL warnings.
+    OPENFDA_URL = os.getenv("OPENFDA_URL", "https://api.fda.gov")
+    OPENFDA_API_KEY = os.getenv("OPENFDA_API_KEY", "")
+    MAX_DDI_DRUGS = 20                # drugs of one result checked against the current medications
+    MAX_CURRENT_MEDICATIONS = 15
     # Workflow 4 (patient VCF): cancer types, driver genes and variant-level drug evidence
     ONCOTREE_API_URL = os.getenv("ONCOTREE_API_URL", "https://oncotree.info/api")
     INTOGEN_DRIVERS_URL = os.getenv(
@@ -148,6 +158,10 @@ class Config:
     MEDCPT_DEVICE = os.getenv("MEDCPT_DEVICE", "")  # "" = Apple GPU (mps) when available, else cpu
     VCF_TOP_PER_TRACK = 10            # drugs shown per track; the full lists go to the appendix
     VCF_AGENTS = True                 # run the exploration agents (LLM) on the exploratory track
+    VCF_CLINICAL_AGENT = True         # the Clinical summary agent: page-1 brief results, regimens, monitoring ([GK])
+    # Stage 7 safety (services/safety.py): a withdrawn drug loses these points; drug–drug interactions and boxed
+    # warnings are flagged on the drug, not scored.
+    VCF_WITHDRAWN_PENALTY = -40
 
 
 class TestConfig(Config):

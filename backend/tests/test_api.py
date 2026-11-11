@@ -90,7 +90,7 @@ def test_explore_a_drug(client, fake_sources, monkeypatch):
 
     patched, seen = explorer.collect_evidence, {}
 
-    def recording(name, relation_types, resolved=None, entity_type="gene"):
+    def recording(name, relation_types, resolved=None, entity_type="gene", medications=()):
         seen["args"] = (name, entity_type)
         return patched(name, relation_types, resolved, entity_type)
 

@@ -10,18 +10,20 @@
 from ...reference.text import strip_salt
 from ..relations import categorize
 
-DGI_KINDS = ("interaction", "mechanism", "guideline", "variant_annotation")
+DGI_KINDS = ("interaction", "mechanism", "guideline", "variant_annotation", "fda_cyp")
 CATEGORY_ORDER = ["inhibit", "induce", "bind", "metabolize", "snp", "other"]
 
 GRADES = {
     "strong": "Strong",          # actionable clinical evidence: CPIC A/B, PharmGKB 1A/1B
-    "moderate": "Moderate",      # PharmGKB 2A/2B, curated ChEMBL mechanism, or broad DGIdb support with literature
+    "moderate": "Moderate",      # PharmGKB 2A/2B, curated ChEMBL mechanism, FDA strong/moderate CYP modulator or
+                                 # sensitive substrate, or broad DGIdb support with literature
     "supportive": "Supportive",  # weaker clinical levels, or DGIdb support from 2+ databases or literature
     "limited": "Limited",        # a single database record without literature
 }
 GRADE_ORDER = list(GRADES)
 
 CPIC_STRONG = {"A", "A/B", "B"}
+FDA_STRENGTH = {"strong": 0, "sensitive": 1, "moderate": 2, "moderate sensitive": 3, "weak": 4, None: 5}
 CPIC_ORDER = ["A", "A/B", "B", "B/C", "C", "C/D", "D"]
 PGKB_ORDER = ["1A", "1B", "2A", "2B", "3", "4"]
 
@@ -32,7 +34,7 @@ def pair_key(gene, drug):
 
 def item_pairs(item):
     """The (gene, drug) pairs an evidence item is about."""
-    if item["kind"] in ("interaction", "mechanism", "guideline"):
+    if item["kind"] in ("interaction", "mechanism", "guideline", "fda_cyp"):
         return [pair_key(item["gene"], item["drug"])]
     if item["kind"] == "variant_annotation":
         return [pair_key(g, d) for g in item["genes"] for d in item["drugs"]]
@@ -56,7 +58,7 @@ def consolidate_pairs(items):
 def _new_row(key):
     return {"gene": key[0], "drug": key[1], "evidence_ids": [], "categories": [], "actions": [], "mechanism": None,
             "sources": [], "databases": [], "score": None, "max_phase": None, "drug_approved": None,
-            "cpic_level": None, "pgkb_level": None, "pmids": [], "url": None}
+            "cpic_level": None, "pgkb_level": None, "fda_role": None, "pmids": [], "url": None}
 
 
 def _add(row, item):
@@ -81,6 +83,11 @@ def _add(row, item):
         row["url"] = item.get("url") or row["url"]  # the curated record is the better link
     elif kind == "guideline":
         row["cpic_level"] = _best(row["cpic_level"], item.get("cpic_level"), CPIC_ORDER)
+    elif kind == "fda_cyp":
+        row["actions"].append({"label": item["label"], "source": "FDA"})
+        if FDA_STRENGTH.get(item.get("strength"), 9) < FDA_STRENGTH.get((row["fda_role"] or {}).get("strength"), 9):
+            row["fda_role"] = {"label": item["label"], "strength": item.get("strength")}
+        row["url"] = row["url"] or item.get("url")
     elif kind == "variant_annotation":
         row["pgkb_level"] = _best(row["pgkb_level"], item.get("level"), PGKB_ORDER)
 
@@ -103,6 +110,7 @@ def _finish(row):
         row["cpic_level"] and f"CPIC {row['cpic_level']}",
         row["pgkb_level"] and f"PharmGKB {row['pgkb_level']}",
         row["max_phase"] and f"Phase {row['max_phase']:g}",
+        row["fda_role"] and f"FDA {row['fda_role']['label']}",
     ])) or None
     row["grade"], row["grade_reason"] = grade(row)
     row["grade_label"] = GRADES[row["grade"]]
@@ -123,10 +131,15 @@ def grade(row):
     if "ChEMBL" in row["sources"]:
         approved = " (approved drug)" if (row["max_phase"] or 0) >= 4 else ""
         return "moderate", f"curated ChEMBL mechanism of action{approved}"
+    fda = row.get("fda_role")
+    if fda and fda["strength"] in ("strong", "moderate", "sensitive", "moderate sensitive"):
+        return "moderate", f"FDA clinical drug-interaction classification: {fda['label']}"
     if n_db >= 3 and has_pmids:
         return "moderate", f"reported by {n_db} databases with literature support (DGIdb)"
     if cpic or pgkb == "3":
         return "supportive", f"lower-level pharmacogenomic evidence ({row['level']})"
+    if fda:
+        return "supportive", f"FDA drug-interaction table: {fda['label']}"
     if n_db >= 2 or has_pmids:
         detail = f"{n_db} databases" if n_db >= 2 else "1 database"
         return "supportive", f"{detail}{' with literature' if has_pmids else ''} (DGIdb)"

@@ -241,6 +241,25 @@ CREATE TABLE dgidb_gene_categories (
 
 CREATE INDEX ix_dgidb_gene_categories_gene_symbol ON dgidb_gene_categories (gene_symbol);
 
+CREATE TABLE drug_cyp_roles (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	drug_name VARCHAR(255) NOT NULL, 
+	drug_name_norm VARCHAR(255) NOT NULL, 
+	chembl_id VARCHAR(20), 
+	`system` VARCHAR(16) NOT NULL, 
+	pathway VARCHAR(32) NOT NULL, 
+	gene_symbol VARCHAR(64), 
+	hgnc_id VARCHAR(20), 
+	`role` VARCHAR(16) NOT NULL, 
+	strength VARCHAR(32), 
+	notes TEXT, 
+	PRIMARY KEY (id)
+);
+
+CREATE INDEX ix_drug_cyp_roles_chembl_id ON drug_cyp_roles (chembl_id);
+CREATE INDEX ix_drug_cyp_roles_drug_name_norm ON drug_cyp_roles (drug_name_norm);
+CREATE INDEX ix_drug_cyp_roles_gene_symbol ON drug_cyp_roles (gene_symbol);
+
 CREATE TABLE drug_mechanisms (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
 	mec_id INTEGER NOT NULL, 
@@ -481,6 +500,23 @@ CREATE TABLE drug_synonyms (
 CREATE INDEX ix_drug_synonyms_chembl_id ON drug_synonyms (chembl_id);
 CREATE INDEX ix_drug_synonyms_synonym_norm ON drug_synonyms (synonym_norm);
 
+CREATE TABLE drug_warnings (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	warning_id INTEGER NOT NULL, 
+	chembl_id VARCHAR(20) NOT NULL, 
+	warning_type VARCHAR(32) NOT NULL, 
+	warning_class VARCHAR(128), 
+	description TEXT, 
+	country VARCHAR(500), 
+	year INTEGER, 
+	refs JSON, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(chembl_id) REFERENCES drugs (chembl_id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_drug_warnings_chembl_id ON drug_warnings (chembl_id);
+CREATE INDEX ix_drug_warnings_warning_type ON drug_warnings (warning_type);
+
 CREATE TABLE gene_aliases (
 	id INTEGER NOT NULL AUTO_INCREMENT, 
 	hgnc_id VARCHAR(20) NOT NULL, 
@@ -514,6 +550,28 @@ CREATE TABLE queries (
 CREATE INDEX ix_queries_created_at ON queries (created_at);
 CREATE INDEX ix_queries_parent_id ON queries (parent_id);
 CREATE INDEX ix_queries_user_id ON queries (user_id);
+
+CREATE TABLE query_drug_interactions (
+	id INTEGER NOT NULL AUTO_INCREMENT, 
+	query_id INTEGER NOT NULL, 
+	evidence_id VARCHAR(16) NOT NULL, 
+	drug_name VARCHAR(255) NOT NULL, 
+	chembl_id VARCHAR(20), 
+	other_drug_name VARCHAR(255) NOT NULL, 
+	other_chembl_id VARCHAR(20), 
+	context VARCHAR(32) NOT NULL, 
+	severity VARCHAR(16) NOT NULL, 
+	mechanism VARCHAR(255), 
+	rule VARCHAR(32) NOT NULL, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(query_id) REFERENCES queries (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_query_drug_interactions_chembl_id ON query_drug_interactions (chembl_id);
+CREATE INDEX ix_query_drug_interactions_drug_name ON query_drug_interactions (drug_name);
+CREATE INDEX ix_query_drug_interactions_other_chembl_id ON query_drug_interactions (other_chembl_id);
+CREATE INDEX ix_query_drug_interactions_other_drug_name ON query_drug_interactions (other_drug_name);
+CREATE INDEX ix_query_drug_interactions_query_id ON query_drug_interactions (query_id);
 
 CREATE TABLE query_interactions (
 	id INTEGER NOT NULL AUTO_INCREMENT, 

@@ -12,6 +12,9 @@ from .services.variants.biology import seed_pathways
 # The example searches offered on the home page (frontend/index.html), warmed by `warm-cache`
 DEMO_GENES = ["CYP2C19", "CYP2D6", "BRAF", "TPMT", "DPYD"]
 DEMO_DRUGS = ["clopidogrel", "Plavix", "codeine", "osimertinib", "warfarin"]
+# The safety-check demos in the user manual (current medications), so their FDA labels are in the store too
+DEMO_SAFETY = [("drug", "Plavix", ("omeprazole", "fluoxetine")), ("drug", "codeine", ("paroxetine",))]
+DEMO_VCF_MEDICATIONS = {"mock_luad_egfr_l858r_t790m": ("carbamazepine",)}
 # Sample logins for markers and demos (docs/USER_MANUAL.md). Local use only: change them before any deployment.
 DEMO_ACCOUNTS = [("demo@pharmagenix.test", "Demo1234!", False), ("admin@pharmagenix.test", "Admin1234!", True)]
 
@@ -38,7 +41,7 @@ def register_cli(app):
     @app.cli.command("import-data")
     @click.argument("sources", nargs=-1, type=click.Choice(IMPORT_ORDER + ["all"]))
     def import_data(sources):
-        """Import reference datasets (hgnc, chembl, cpic, clinpgx, dgidb, fda, oncotree, intogen, civic, hotspots, cbioportal, pbs) or all."""
+        """Import reference datasets (hgnc, chembl, cpic, clinpgx, dgidb, fda, fda_ddi, oncotree, intogen, civic, hotspots, cbioportal, pbs) or all."""
         selected = IMPORT_ORDER if not sources or "all" in sources else [s for s in IMPORT_ORDER if s in sources]
         for source in selected:
             run_import(source, echo=click.echo)
@@ -94,6 +97,27 @@ def register_cli(app):
         click.echo(f"\nDetails: MLflow UI -> experiment {app.config['MLFLOW_EXPERIMENT_PREFIX']}-vcf -> Evaluation runs "
                    f"(run {result.run_id})")
 
+    @app.cli.command("benchmark")
+    @click.option("--dry-run", is_flag=True, help="Build the evidence and print the plan; no LLM calls.")
+    @click.option("--rescore", is_flag=True, help="Recompute the metrics from the saved reports; no LLM calls.")
+    @click.option("--max-tokens", type=int, help="Output limit per report for this run (default LLM_MAX_TOKENS).")
+    @click.option("--case", "cases", multiple=True, help="Only this case (repeatable): a mock VCF id, gene or drug.")
+    @click.option("--arm", "arms", multiple=True, type=click.Choice(["grounded-primary", "grounded-comparison",
+                                                                     "ungrounded-primary"]))
+    def benchmark(dry_run, rescore, max_tokens, cases, arms):
+        """Grounded vs. ungrounded LLM reports on the mock VCFs and demo searches (app/benchmark.py); writes
+        docs/evaluation/benchmark.md, benchmark_cases.csv and benchmark_reports.json."""
+        from .benchmark import OUT_DIR, rescore as rescore_saved, run
+
+        if rescore:
+            rescore_saved(echo=click.echo)
+            click.echo(f"\nResults: {OUT_DIR / 'benchmark.md'}")
+            return
+        summary = run(arms=list(arms) or None, only=list(cases) or None, dry_run=dry_run, echo=click.echo,
+                      max_tokens=max_tokens)
+        if summary:
+            click.echo(f"\nResults: {OUT_DIR / 'benchmark.md'}")
+
     @app.cli.command("dump-schema")
     def dump_schema():
         """Print MySQL DDL generated from the models (used to produce schema.sql)."""
@@ -124,19 +148,21 @@ def register_cli(app):
 
         if store_size() is None:
             raise click.ClickException("HTTP_CACHE is off; set HTTP_CACHE=fallback (the default) in backend/.env")
-        searches = [("gene", g) for g in DEMO_GENES] + [("drug", d) for d in DEMO_DRUGS]
-        for entity_type, name in searches:
+        searches = ([("gene", g, ()) for g in DEMO_GENES] + [("drug", d, ()) for d in DEMO_DRUGS]
+                    + list(DEMO_SAFETY))
+        for entity_type, name, medications in searches:
             try:
-                collect_evidence(name, DEFAULT_RELATION_TYPES, entity_type=entity_type)
-                click.echo(f"ok    {entity_type} {name}")
+                collect_evidence(name, DEFAULT_RELATION_TYPES, entity_type=entity_type, medications=medications)
+                click.echo(f"ok    {entity_type} {name}" + (f" + {', '.join(medications)}" if medications else ""))
             except Exception as exc:  # noqa: BLE001 - report and carry on with the others
                 click.echo(f"FAIL  {entity_type} {name}: {exc}")
         if not no_vcf:
             for example in mock_examples():
                 try:
                     variants, info, ex = load_example(example["id"])
-                    run_pipeline(variants, info, resolve_cancer_type(ex["cancer_type"]))
-                    click.echo(f"ok    vcf {example['id']}")
+                    medications = DEMO_VCF_MEDICATIONS.get(example["id"], ())
+                    run_pipeline(variants, info, resolve_cancer_type(ex["cancer_type"]), medications)
+                    click.echo(f"ok    vcf {example['id']}" + (f" + {', '.join(medications)}" if medications else ""))
                 except Exception as exc:  # noqa: BLE001
                     click.echo(f"FAIL  vcf {example['id']}: {exc}")
         click.echo(f"\n{store_size()} API responses stored in {app.config['HTTP_CACHE_PATH']}")

@@ -3,7 +3,7 @@ import { describeEvidence, el, focusEvidence } from "./util.js";
 
 const CITE_ID = String.raw`E\d+(?:\s*[–-]\s*E\d+)?`; // E3, or a range like E1–E24
 const CITE_RE = new RegExp(String.raw`\[\s*(${CITE_ID}(?:\s*[,;]\s*${CITE_ID})*)\s*\]`, "g");
-const ROLE_LABELS = { primary: "Primary model", comparison: "Comparison model" };
+const ROLE_LABELS = { primary: "Primary model", comparison: "Comparison model", clinical: "Clinical summary" };
 const STATUS_LABELS = { success: "Success", flagged: "Flagged", failed: "Failed" };
 
 const PROVIDER_NAMES = { openai: "OpenAI", anthropic: "Claude" };

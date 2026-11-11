@@ -47,6 +47,7 @@ admin account, or with the `ADMIN_TOKEN` from `.env`).
 
 - **User manual** (sample logins, every workflow, admin console, demo checklist): [docs/USER_MANUAL.md](docs/USER_MANUAL.md)
 - **Database design** (ER diagrams, tables, normalisation, example SQL): [docs/database.md](docs/database.md)
+- **Evaluation** (pipeline accuracy; grounded vs. ungrounded LLM benchmark with statistics): [docs/evaluation/README.md](docs/evaluation/README.md)
 
 Upgrading a database created by an earlier version: `flask --app run upgrade-db` (adds the new columns and tables,
 moves report citations out of JSON; safe to re-run). Before a demo, `flask --app run warm-cache` stores the live API
@@ -69,11 +70,12 @@ local source carries that version.
 | Dataset                                     | Used for                                                                                                                                                         | Imported                                                                                | Rows (Sept 2026)                                  | Licence                                                                 |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------- |
 | [HGNC](https://www.genenames.org/download/) | Normalising gene input: symbols, previous symbols, aliases, Ensembl and NCBI Gene IDs (`P53 → TP53`)                                                             | Full complete-set TSV                                                                   | ~45k genes, ~106k names                           | CC0                                                                     |
-| [ChEMBL](https://www.ebi.ac.uk/chembl/)     | Curated mechanisms of action with action types (inhibitor, agonist…), which most DGIdb interactions lack; drug synonyms and trade names (`Plavix → CLOPIDOGREL`) | Mechanism table plus drug names (including salt forms' trade names), via the ChEMBL API | ~5.6k drugs, ~58k names, ~12k mechanism–gene rows | CC BY-SA 3.0 (attribution required)                                     |
+| [ChEMBL](https://www.ebi.ac.uk/chembl/)     | Curated mechanisms of action with action types (inhibitor, agonist…), which most DGIdb interactions lack; drug synonyms and trade names (`Plavix → CLOPIDOGREL`); drug warnings (withdrawals, boxed warnings) for the safety check | Mechanism table, drug names (including salt forms' trade names) and drug warnings, via the ChEMBL API | ~5.6k drugs, ~58k names, ~12k mechanism–gene rows | CC BY-SA 3.0 (attribution required)                                     |
 | [CPIC](https://cpicpgx.org/)                | Genotype/phenotype-based prescribing recommendations for the SNP-specific relationship type; the supporting guideline tables (allele functions and frequencies, diplotype → phenotype mappings, example CDS consultation text, pre-/post-test alerts) for checking reports against the guidelines | Pairs, recommendations and the [cpic-data](https://github.com/cpicpgx/cpic-data) tables, via the CPIC API (cpic-data releases no longer attach database dumps) | ~570 pairs, ~2.1k recommendations, ~1.4k alleles, ~7.2k allele frequencies, ~113k diplotypes, ~2.2k alerts | See cpicpgx.org |
 | [ClinPGx](https://www.clinpgx.org/downloads) (PharmGKB) | Guideline annotations from CPIC, DPWG, CPNDS, RNPGx and others; PGx drug-label annotations (FDA, EMA, PMDA, HCSC, Swissmedic); gene–chemical relationships. Clinical annotations stay live (ClinPGx API) | `relationships` (gene–chemical rows only), `drugLabels` and `guidelineAnnotations.json` downloads | 219 guidelines (~480 gene–drug pairs), ~2.2k label rows, ~10k relationships | CC BY-NC-SA 4.0 (attribution, non-commercial) |
 | [DGIdb](https://dgidb.org/downloads)        | Druggable-genome gene categories (kinase, clinically actionable…) for gene-level filtering. Interactions stay live (DGIdb API) | `categories.tsv`, mapped to normalised genes through `genes.tsv` | ~32k gene categories | Per contributing source; see dgidb.org |
 | [FDA PGx biomarker table](https://www.fda.gov/drugs/science-and-research-drugs/table-pharmacogenomic-biomarkers-drug-labeling) | Which FDA labels name a pharmacogenomic biomarker, the therapeutic area and the label sections | Parsed from the HTML page (no download file exists); biomarkers mapped to HGNC symbols where they name them | ~690 table rows, ~750 gene rows | Public domain (US government) |
+| [FDA CYP / transporter interaction table](https://www.fda.gov/CYPandTransporterInteractingDrugs) | Drug–drug interaction checks (strong / moderate / weak CYP inhibitors and inducers, sensitive substrates, transporter roles), and drug–gene evidence for CYP and transporter genes (CYP2D6 → paroxetine, strong inhibitor) | Parsed from the HTML page; CYP3A linked to CYP3A4, transporters to their genes (P-gp → ABCB1) | ~245 substances, ~420 role rows | Public domain (US government) |
 | [OncoTree](https://oncotree.info/) | Workflow 4: the standard term for the cancer type / subtype (LUAD → NSCLC → LUNG) | Latest stable tumour types, via the OncoTree API | ~900 types | See oncotree.info |
 | [IntOGen](https://www.intogen.org/download) | Workflow 4: driver genes per cancer type, for the "cancer relevance" filter (replaces COSMIC CGC, which needs a licence) | Compendium of cancer genes (2024-06-18 release) | ~4.5k gene–cohort rows, 633 genes | CC0 |
 | [CIViC](https://civicdb.org/) | Workflow 4: variant-level drug response / resistance evidence, levels A–E; molecular profiles parsed into matchable parts | Nightly predictive evidence summaries | ~2.8k evidence items | CC0 |
@@ -82,7 +84,7 @@ local source carries that version.
 | [PBS Schedule](https://www.pbs.gov.au/)     | Whether a drug is PBS-listed in Australia, its item codes, forms, benefit type and restriction text (shown separately; not DGI evidence and not sent to the LLM)                   | Current month's schedule and restrictions, via the PBS public API                                       | ~15k item/brand rows, ~3.6k restrictions          | © Commonwealth of Australia; redistribution permitted, modification not |
 
 ```bash
-flask --app run import-data                 # all, in dependency order (HGNC → ChEMBL → CPIC → ClinPGx → DGIdb → FDA → OncoTree → IntOGen → CIViC → hotspots → cBioPortal → PBS)
+flask --app run import-data                 # all, in dependency order (HGNC → ChEMBL → CPIC → ClinPGx → DGIdb → FDA → FDA DDI → OncoTree → IntOGen → CIViC → hotspots → cBioPortal → PBS)
 flask --app run import-data pbs             # just one; PBS updates on the 1st of each month
 flask --app run reference-status            # what is loaded, and which versions
 ```
@@ -190,10 +192,16 @@ VCF + cancer type ──► POST /api/vcf/explore                    services/vc
                 │      interpretation (pathways, co-mutations such as STK11 + KRAS, TP53 + RB1) · Hypothesis
                 │    every statement cites an evidence ID or is labelled "Hypothesis"; a check flags violations
   7 Analysis    ├─ each track ranked separately by rules: established by level, subtype match, specificity,
-                │    resistance (−60, down-ranked); exploratory by evidence × Tier 3 S + literature support.
+                │    resistance (−60, down-ranked; a regimen inherits the strong resistance of any of its
+                │    drugs, e.g. erlotinib + ramucirumab with T790M); exploratory by evidence × Tier 3 S +
+                │    literature support.
                 │    Top VCF_TOP_PER_TRACK drugs in the report, the full lists in the appendix. "No approved
                 │    targeted therapy" when the established track has nothing without resistance. The Analysis
                 │    agent (template vcf_report v3) explains both tracks; it runs in parallel with the agents.
+                │    The Clinical summary agent (services/variants/clinical.py, VCF_CLINICAL_AGENT) turns the
+                │    ranked tracks and the optional clinical context into brief results, a regimen table and a
+                │    monitoring plan; [GK] marks general clinical knowledge, and a check flags it if it
+                │    recommends a down-ranked drug or a regimen containing one.
   8 Report      ▼  A. established clinical evidence · B. exploratory predictions (scores, Tier 3 F/R/B/S, agent
                    output) · co-mutations without a targeted drug · network · appendix (all tiered, low-priority
                    and QC-filtered variants with reasons) · limitations · disclaimer
@@ -228,6 +236,32 @@ pip install -r requirements-rag.txt   # PyTorch + transformers; the models (~1.3
 Without it, or with `VCF_LITERATURE_RANKER=keyword`, papers and sentences are ranked by gene, variant, drug and
 lung-cancer mentions instead. The first search after a restart loads the models (a few seconds; about 1–2 minutes the
 first time, while they download). Tests always use the keyword ranker.
+
+## Drug safety: interactions and warnings
+
+Before a drug is shown, `services/safety.py` checks it with fixed rules (no LLM):
+
+- **Warnings** (ChEMBL): a withdrawn drug (year, countries, toxicity class) or a boxed warning. In Workflow 4 a
+  withdrawn drug loses `VCF_WITHDRAWN_PENALTY` points; boxed warnings are flagged only (most anticancer drugs carry one).
+- **Drug–drug interactions** with the patient's current medications (optional field in every search form) and, in
+  Workflow 4, between the drugs of each combination regimen. Four rules, strongest source first:
+  1. *label class*: the drug's FDA label (openFDA) covers a class, e.g. "Strong CYP3A Inducers: Avoid concomitant use",
+     and the FDA table puts the other drug in it (carbamazepine: strong CYP3A inducer);
+  2. *label names drug*: the label names the other drug ("Avoid concomitant use of clopidogrel with omeprazole");
+  3. *FDA table*: a strong / moderate inhibitor or inducer meets a sensitive substrate of the same pathway;
+  4. *phenoconversion* (drug–drug–gene): the other drug strongly or moderately inhibits a pharmacogene for which the
+     drug has a CPIC guideline (fluoxetine + clopidogrel: CYP2C19), so the functional phenotype differs from the
+     genotype.
+
+  Severity is *major* when the label says to avoid the combination (in that sentence or the next ones on the same
+  pathway), when a strong modulator meets a sensitive substrate, or for strong-inhibitor phenoconversion. Sentences
+  saying no adjustment is needed are not flagged. Interactions are **flagged, not scored**: the answer to
+  "osimertinib + carbamazepine" is to change the carbamazepine, not to rank an unapproved drug above osimertinib.
+
+Each alert is an evidence item (the LLM may cite it but not add others), a row of `query_drug_interactions`, a
+"Drug safety" section on the results page and a table in the Word report. Labels come from openFDA (free; 1,000
+requests a day per IP without `OPENFDA_API_KEY`) through the local response store, so `warm-cache` covers them.
+Pharmacokinetic interactions only: additive toxicity or QT effects are not checked.
 
 ## In-silico mutagenesis heatmap (optional, AlphaGenome)
 
@@ -336,8 +370,10 @@ backend/
       vcf_explorer.py         orchestrates Workflow 4 (patient VCF)
       variants/               Workflow 4: parse (VCF / MAF), vep, oncokb, cancer_types, matching, biology,
                               pipeline (deterministic tools), agents (exploration agents, LLM),
+                              clinical (Clinical summary agent, LLM),
                               alphagenome (in-silico mutagenesis heatmap, optional)
       report_docx.py          "Download report (.docx)": the Word report of a query
+      safety.py               drug warnings and drug–drug interaction checks (FDA labels, FDA CYP table, CPIC)
     report_assets/            report_base.docx: styles, page layout, header and footer of the Word report
     mock_vcfs/                synthetic mock VCFs + manifest.json (Workflow 4 test data)
   scripts/make_mock_vcfs.py   regenerates the mock VCFs (positions from Ensembl VEP)
@@ -351,7 +387,7 @@ backend/
 frontend/
   index.html  admin.html
   css/style.css
-  js/ api.js  main.js  vcf.js  report.js  auth.js  background.js  profile.js  workflow.js  summary.js  table.js  network.js  availability.js  admin.js  util.js
+  js/ api.js  main.js  vcf.js  report.js  safety.js  auth.js  background.js  profile.js  workflow.js  summary.js  table.js  network.js  availability.js  admin.js  util.js
 ```
 
 ## MLflow
@@ -393,6 +429,11 @@ cd backend && .venv/bin/flask --app run mlflow-eval --case mock_luad_kras_g12c
   `gpt-6-luna` is a reasoning model and rejects any temperature, so `OPENAI_TEMPERATURE` stays empty. Swap the two
   with `PRIMARY_PROVIDER` / `COMPARISON_PROVIDER`. The anthropic SDK 1.x has no `temperature` argument, so the client
   sends it in the request body (`extra_body`).
+- **SDK pinned below 2.0**: anthropic 2.0.0 and later send API version `2026-10-21`, on which any request carrying
+  `temperature` (even in `extra_body`) is rejected with a 400 on every model. `requirements.txt` therefore pins
+  `anthropic>=1.8,<2`; a fresh install without the pin would make every primary report fail. Moving to a newer Claude
+  model (which also means dropping `temperature`) is planned, not done: see "Model choice and next steps" in
+  [docs/evaluation/README.md](docs/evaluation/README.md).
 - **OpenAI model ID**: `.env` defaults to `gpt-6-luna`. Confirm the exact model ID for "GPT-6 Luna" in your OpenAI
   dashboard. Calls go through the Responses API. If it is a reasoning model, `LLM_MAX_TOKENS` also covers reasoning
   tokens, and a budget that is too small returns an empty answer (recorded as failed).
