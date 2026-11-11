@@ -193,6 +193,7 @@ export function renderVcfQuery(query) {
   renderCoMutations(evidence);
   renderAppendix(evidence);
   renderLimits(evidence.limitations || [], evidence.parameters);
+  renderIsm(evidence);
   const tracks = evidence.tracks || {};
   $("vcf-count-established").textContent = tracks.established?.length || "";
   $("vcf-count-exploratory").textContent = tracks.exploratory?.length || "";
@@ -443,6 +444,112 @@ function renderLimits(notes, parameters) {
       + `${pct(qc.min_vaf)}, gnomAD AF ≤ ${pct(qc.max_population_af)}; Tier 3 S = ${t3.weights.F}·F + ${t3.weights.R}·R + `
       + `${t3.weights.B}·B, low priority below ${t3.min_score}.`) : "",
     el("p", { class: "disclaimer" }, "Research and teaching use only, with synthetic test data. Not clinical advice."));
+}
+
+// ---------- In-silico mutagenesis (AlphaGenome) ----------
+
+const ismCache = new Map(); // "chrom:pos:alt" -> response, for this page session
+let ismRequest = 0;
+
+/** ISM targets: the variants that passed QC (tiered first, then low priority), capped by the backend setting. */
+function renderIsm(evidence) {
+  const box = $("vcf-ism");
+  const settings = options?.ism;
+  const v = evidence.variants || {};
+  const targets = [...(v.tiered || []), ...(v.low_priority || [])];
+  const assembly = evidence.input?.assembly || "GRCh38";
+  box.replaceChildren();
+  if (!settings?.enabled) {
+    box.append(el("p", { class: "muted" }, "AlphaGenome is not configured on this server. ", settings?.reason || ""));
+    return;
+  }
+  if (!targets.length) {
+    box.append(el("p", { class: "muted" }, "No variant passed QC, so there is nothing to map."));
+    return;
+  }
+  if (!/^(GRCh38|hg38)$/i.test(assembly)) {
+    box.append(el("p", { class: "muted" }, `AlphaGenome supports GRCh38 only; this file is on ${assembly}.`));
+    return;
+  }
+  const shown = targets.slice(0, settings.max_variants);
+  const panel = el("div");
+  const buttons = shown.map((t, i) => el("button", { type: "button", class: "secondary", onclick: () => select(i) },
+    t.notation || `${t.gene || "?"} ${t.protein_change || ""}`));
+  const select = (i) => {
+    buttons.forEach((b, j) => b.classList.toggle("active", i === j));
+    loadIsm(shown[i], assembly, panel);
+  };
+  box.append(
+    el("p", { class: "muted small" }, `Each cell: AlphaGenome's predicted ${settings.output_label} when that base is `
+      + `changed to the row's base, on the reference sequence (±${settings.flank} bp). Red raises it, blue lowers it; `
+      + "the outlined cell is the patient's own change. AlphaGenome models regulation (expression, splicing, chromatin), "
+      + "not protein function."),
+    targets.length > shown.length ? el("p", { class: "muted small" },
+      `Showing the first ${shown.length} of ${targets.length} QC-passed variants.`) : "",
+    el("div", { class: "ism-picker" }, buttons),
+    panel,
+  );
+  select(0);
+}
+
+async function loadIsm(t, assembly, panel) {
+  const key = `${t.chrom}:${t.pos}:${t.alt}`;
+  const ticket = ++ismRequest;
+  if (!ismCache.has(key)) {
+    panel.replaceChildren(el("p", { class: "muted" }, `Scoring ${(2 * options.ism.flank + 1) * 3} substitutions around `
+      + `${where(t)} with AlphaGenome… this can take a minute.`));
+    try {
+      ismCache.set(key, await api.vcfIsm({ chrom: t.chrom, pos: t.pos, ref: t.ref, alt: t.alt, gene: t.gene, assembly }));
+    } catch (err) {
+      if (ticket === ismRequest) panel.replaceChildren(el("p", { class: "report-warning" }, `AlphaGenome ISM failed: ${err.message}`));
+      return;
+    }
+  }
+  if (ticket === ismRequest) panel.replaceChildren(...ismHeatmap(ismCache.get(key), t));
+}
+
+/** 3 decimals, or 2 significant digits in exponent form for small values (as AlphaGenome's own viewer shows them). */
+function ismValue(x) {
+  if (x === 0) return "0";
+  return Math.abs(x) < 0.01 ? x.toExponential(1) : x.toFixed(3);
+}
+
+function ismHeatmap(data, t) {
+  const n = data.positions.length;
+  const max = data.max_abs || 1;
+  const observed = data.variant?.snv ? data.variant : null;
+  const grid = el("div", { class: "ism-grid", style: `grid-template-columns: 22px repeat(${n}, minmax(64px, 1fr))` });
+  for (const base of "ACGT") {
+    grid.append(el("div", { class: "ism-base" }, base));
+    data.positions.forEach((pos, i) => {
+      const x = data.scores[base][i];
+      if (data.ref[i] === base || x == null) {
+        grid.append(el("div", { class: "ism-cell ref", title: `${data.chrom}:${pos} reference ${data.ref[i] || "?"}` }, "ref"));
+        return;
+      }
+      const share = Math.round(Math.min(Math.abs(x) / max, 1) * 100);
+      const colour = x >= 0 ? "--ism-pos" : "--ism-neg";
+      const isObserved = observed && pos === observed.pos && base === observed.alt.toUpperCase();
+      grid.append(el("div", {
+        class: `ism-cell${share > 60 ? " light" : ""}${isObserved ? " observed" : ""}`,
+        style: `background: color-mix(in srgb, var(${colour}) ${share}%, var(--surface))`,
+        title: `${data.chrom}:${pos} ${data.ref[i]}>${base}: ${x}${isObserved ? " (patient variant)" : ""}`,
+      }, ismValue(x)));
+    });
+  }
+  grid.append(el("div"));
+  data.positions.forEach((pos) => grid.append(el("div", { class: `ism-pos${pos === t.pos ? " centre" : ""}` },
+    pos.toLocaleString("en-US"))));
+  const tissue = data.tissue && data.tissue_matched ? `tissue ${data.tissue} (${data.tracks} tracks)`
+    : `all tissues (${data.tracks} tracks${data.tissue ? `; none for ${data.tissue}` : ""})`;
+  return [
+    el("p", { class: "ism-meta small" }, el("strong", {}, t.notation || where(t)), ` · ${data.chrom}:${data.positions[0]}–`
+      + `${data.positions[n - 1]} · ${data.output_label}${data.gene ? ` (${data.gene})` : ""} · ${tissue} · `
+      + `${data.sequence_length} context${data.cached ? " · cached" : ""}`),
+    el("div", { class: "ism-scroll" }, grid),
+    el("div", { class: "ism-legend small muted" }, ismValue(-max), el("span", { class: "ramp" }), ismValue(max),
+      el("span", {}, `· ${data.model}. Prediction for research use, not a pathogenicity call.`)),
+  ];
 }
 
 /** The element behind a citation in the VCF results, or null. */

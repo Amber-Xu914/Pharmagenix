@@ -5,6 +5,7 @@ from flask import Blueprint, current_app, jsonify, request, send_file
 from ..errors import APIError
 from ..reference.lookup import latest_releases
 from ..services.vcf_explorer import load_example, mock_examples, mock_path, read_upload, run_vcf_exploration
+from ..services.variants import alphagenome
 from ..services.variants.cancer_types import lung_types
 from .explore import _query_response
 
@@ -24,6 +25,7 @@ def options():
         max_bytes=cfg["MAX_VCF_BYTES"],
         qc={"min_depth": cfg["VCF_QC_MIN_DEPTH"], "min_alt_reads": cfg["VCF_QC_MIN_ALT_READS"],
             "min_vaf": cfg["VCF_QC_MIN_VAF"], "max_population_af": cfg["VCF_QC_MAX_POPULATION_AF"]},
+        ism=alphagenome.settings(),
     )
 
 
@@ -56,3 +58,14 @@ def explore():
         cancer_type = body.get("cancer_type") or example["cancer_type"]
         compare = bool(body.get("compare"))
     return _query_response(run_vcf_exploration(variants, info, cancer_type, compare), 201)
+
+
+@bp.post("/ism")
+def ism():
+    """AlphaGenome in-silico mutagenesis heatmap around one QC-passed variant.
+    JSON {chrom, pos, ref?, alt?, gene?, assembly?}; slow (tens of seconds), so the page asks for it on demand."""
+    body = request.get_json(silent=True) or {}
+    if body.get("chrom") is None or body.get("pos") is None:
+        raise APIError("chrom and pos are required")
+    return jsonify(alphagenome.ism_heatmap(body["chrom"], body["pos"], gene=body.get("gene"), ref=body.get("ref"),
+                                           alt=body.get("alt"), assembly=body.get("assembly") or "GRCh38"))

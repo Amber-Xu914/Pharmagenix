@@ -228,6 +228,25 @@ Without it, or with `VCF_LITERATURE_RANKER=keyword`, papers and sentences are ra
 lung-cancer mentions instead. The first search after a restart loads the models (a few seconds; about 1–2 minutes the
 first time, while they download). Tests always use the keyword ranker.
 
+## In-silico mutagenesis heatmap (optional, AlphaGenome)
+
+The last section of the Workflow 4 report maps every single-base change in a ±10 bp window around each variant that
+passed QC (tiered and low-priority; 21 positions × 3 bases = 63 substitutions), scored by Google DeepMind's
+AlphaGenome against the GRCh38 reference. By default the score is the RNA-seq log fold change for the variant's gene,
+averaged over the lung tracks (`UBERON:0002048`); red raises it, blue lowers it, and the patient's own change is
+outlined. The page asks for one variant at a time (`POST /api/vcf/ism`), as each map takes tens of seconds; results are
+cached in memory.
+
+```bash
+pip install -r requirements-alphagenome.txt   # Python 3.11+
+# backend/.env: ALPHAGENOME_API_KEY=...  (free non-commercial key: https://deepmind.google.com/science/alphagenome)
+```
+
+`ALPHAGENOME_ISM_OUTPUT` switches the score to splicing (`SPLICE_SITES`) or chromatin (`DNASE`, `ATAC`, `CAGE`),
+`ALPHAGENOME_ISM_TISSUE` to another UBERON / CL term, `ALPHAGENOME_ISM_FLANK` the window. AlphaGenome models
+regulation (expression, splicing, chromatin), not protein function, so for a missense variant the map is not a
+pathogenicity call. Without a key the section says how to enable it.
+
 ## MLflow tracking (optional)
 
 Set `MLFLOW_TRACKING_URI` (e.g. `sqlite:///mlflow.db` in `backend/.env`) and every search, in both workflows, is
@@ -315,7 +334,8 @@ backend/
       explorer.py             orchestrates one gene search through the workflow stages
       vcf_explorer.py         orchestrates Workflow 4 (patient VCF)
       variants/               Workflow 4: parse (VCF / MAF), vep, oncokb, cancer_types, matching, biology,
-                              pipeline (deterministic tools), agents (exploration agents, LLM)
+                              pipeline (deterministic tools), agents (exploration agents, LLM),
+                              alphagenome (in-silico mutagenesis heatmap, optional)
     mock_vcfs/                synthetic mock VCFs + manifest.json (Workflow 4 test data)
   scripts/make_mock_vcfs.py   regenerates the mock VCFs (positions from Ensembl VEP)
       workflow/               one module per stage: resolution, profiles, evidence

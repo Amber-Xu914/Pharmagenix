@@ -416,3 +416,57 @@ def test_vep_outage_is_a_clear_503(app, vcf_reference, stub_live, monkeypatch):
         run("mock_luad_egfr_l858r_t790m")
     assert caught.value.status == 503
     assert "Ensembl VEP" in caught.value.message and "(503 Service Unavailable)" in caught.value.message
+
+
+# ---------- AlphaGenome in-silico mutagenesis (no live calls: the scoring step is stubbed) ----------
+
+def test_ism_is_off_without_a_key(client):
+    data = client.get("/api/vcf/options").get_json()
+    assert data["ism"]["enabled"] is False and "ALPHAGENOME_API_KEY" in data["ism"]["reason"]
+    resp = client.post("/api/vcf/ism", json={"chrom": "7", "pos": 55191822})
+    assert resp.status_code == 503
+
+
+def test_ism_route_validates_and_caches(app, client, monkeypatch):
+    from app.services.variants import alphagenome
+
+    app.config["ALPHAGENOME_API_KEY"] = "test-key"
+    monkeypatch.setattr(alphagenome, "_installed", lambda: True)
+    monkeypatch.setattr(alphagenome, "_cache", alphagenome.OrderedDict())
+    calls = []
+
+    def fake_score(chrom, pos, gene, output, tissue, flank, length):
+        calls.append((chrom, pos, gene, output, length))
+        positions = list(range(pos - flank, pos + flank + 1))
+        scores = {b: [0.1] * len(positions) for b in "ACGT"}
+        return {"chrom": chrom, "positions": positions, "ref": ["T"] * len(positions), "scores": scores,
+                "max_abs": 0.1, "output": output, "tissue": tissue, "tissue_matched": True, "tracks": 2,
+                "gene": gene, "flank": flank, "model": "stub"}
+
+    monkeypatch.setattr(alphagenome, "_score", fake_score)
+    body = {"chrom": "7", "pos": 55191822, "ref": "T", "alt": "G", "gene": "EGFR"}
+    first = client.post("/api/vcf/ism", json=body).get_json()
+    assert first["chrom"] == "chr7" and len(first["positions"]) == 21 and first["cached"] is False
+    assert first["variant"] == {"pos": 55191822, "ref": "T", "alt": "G", "snv": True}
+    assert client.post("/api/vcf/ism", json=body).get_json()["cached"] is True
+    assert calls == [("chr7", 55191822, "EGFR", "RNA_SEQ", 2**20)]
+
+    assert client.post("/api/vcf/ism", json={**body, "assembly": "GRCh37"}).status_code == 400
+    assert client.post("/api/vcf/ism", json={**body, "chrom": "chrM"}).status_code == 400
+    assert client.post("/api/vcf/ism", json={"chrom": "7"}).status_code == 400
+
+
+def test_ism_scalar_picks_the_gene_and_tissue():
+    import numpy as np
+    import pandas as pd
+    from types import SimpleNamespace
+    from app.services.variants.alphagenome import _scalar
+
+    adata = SimpleNamespace(
+        X=np.array([[1.0, 3.0, 5.0], [10.0, 20.0, 30.0]]),
+        obs=pd.DataFrame({"gene_name": ["EGFR", "SEC61G"]}),
+        var=pd.DataFrame({"ontology_curie": ["UBERON:0002048", "UBERON:0002048", "UBERON:0000955"]}),
+    )
+    assert _scalar(adata, "EGFR", "UBERON:0002048") == (2.0, 2, True, "EGFR")
+    # Unknown tissue: every track; unknown gene: the gene that moves most
+    assert _scalar(adata, "KRAS", "CL:0000000") == (20.0, 3, False, "SEC61G")

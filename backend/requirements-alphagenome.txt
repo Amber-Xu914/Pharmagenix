@@ -1,0 +1,4 @@
+# Optional: AlphaGenome in-silico mutagenesis heatmap, the last section of the Workflow 4 report
+# (services/variants/alphagenome.py). Needs Python >= 3.11 and ALPHAGENOME_API_KEY in .env.
+-r requirements.txt
+alphagenome>=0.11

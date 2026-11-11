@@ -73,6 +73,15 @@ class Config:
     VEP_GRCH37_URL = os.getenv("VEP_GRCH37_URL", "https://grch37.rest.ensembl.org")
     ONCOKB_URL = os.getenv("ONCOKB_URL", "https://www.oncokb.org/api/v1")
     ONCOKB_API_TOKEN = os.getenv("ONCOKB_API_TOKEN", "")
+    # Workflow 4, last section: AlphaGenome in-silico mutagenesis around each QC-passed variant (optional; needs
+    # requirements-alphagenome.txt and a key from https://deepmind.google.com/science/alphagenome). GRCh38 only.
+    ALPHAGENOME_API_KEY = os.getenv("ALPHAGENOME_API_KEY", "")
+    ALPHAGENOME_ISM_OUTPUT = os.getenv("ALPHAGENOME_ISM_OUTPUT", "RNA_SEQ")  # RNA_SEQ | SPLICE_SITES | DNASE | ATAC | CAGE ...
+    ALPHAGENOME_ISM_TISSUE = os.getenv("ALPHAGENOME_ISM_TISSUE", "UBERON:0002048")  # lung; "" = all tissues
+    ALPHAGENOME_ISM_FLANK = int(os.getenv("ALPHAGENOME_ISM_FLANK", "10"))  # bases each side: 21 positions x 3 = 63 SNVs
+    ALPHAGENOME_SEQUENCE_LENGTH = os.getenv("ALPHAGENOME_SEQUENCE_LENGTH", "1MB")  # context: 16KB | 100KB | 500KB | 1MB
+    ALPHAGENOME_ISM_MAX_VARIANTS = int(os.getenv("ALPHAGENOME_ISM_MAX_VARIANTS", "10"))  # variants offered in the report
+    ALPHAGENOME_TIMEOUT = float(os.getenv("ALPHAGENOME_TIMEOUT", "30"))  # seconds to connect
 
     # Local reference datasets (imported with `flask --app run import-data`)
     HGNC_URL = os.getenv(
@@ -153,4 +162,5 @@ class TestConfig(Config):
     HTTP_CACHE = "off"  # tests never read or write the response store
     PRIMARY_PROVIDER, COMPARISON_PROVIDER = "openai", "anthropic"  # fixed, whatever .env says
     VCF_LITERATURE_RANKER = "keyword"  # tests never load MedCPT
+    ALPHAGENOME_API_KEY = ""  # no live AlphaGenome calls from tests
     MLFLOW_TRACKING_URI = ""  # tests that need MLflow turn it on themselves

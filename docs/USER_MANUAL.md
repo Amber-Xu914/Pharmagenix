@@ -126,6 +126,33 @@ The results page has:
 - **Appendix**: every tiered and low-priority variant, the QC audit table (each filtered variant and why), the full
   drug lists, and **Retrieved literature**: the papers the Literature agent read, ranked by MedCPT, with the abstract
   sentences it was given.
+- **In-silico mutagenesis (AlphaGenome)**, at the bottom (see below).
+
+### In-silico mutagenesis heatmap (AlphaGenome)
+
+The last section maps how every possible single-base change around a variant would affect the gene, as predicted by
+Google DeepMind's AlphaGenome model. It covers the variants that passed QC (tiered first, then low priority).
+
+1. The first variant is scored automatically; press another variant's button to score it. Each takes 10–60 seconds
+   the first time, then it is cached until the server restarts.
+2. Read the grid: columns are genomic positions (±10 bp around the variant, its own position in bold), rows are the
+   four bases. Each cell is the predicted change if that position were mutated to that base. Grey **ref** cells are
+   the reference base. Red means the change raises the score, blue means it lowers it. The cell with a black outline
+   is the patient's own change.
+3. By default the score is the predicted RNA-seq expression change (log fold change) of the variant's gene in lung
+   tissue. The line above the grid says which output, tissue and gene were used.
+
+How to interpret it:
+
+- AlphaGenome predicts gene regulation (expression, splicing, chromatin) from the DNA sequence. It does not model
+  protein structure or function. For a missense variant such as EGFR L858R, the values are therefore small (around
+  0.001–0.005). That is expected: the change alters the protein, not how much of it is made. Values like these do
+  not say whether the variant is pathogenic or drug-sensitive; Sections A and B do that.
+- The map is most informative for variants near splice sites, promoters or other regulatory sequence. To see
+  splicing effects instead, set `ALPHAGENOME_ISM_OUTPUT=SPLICE_SITES` in `backend/.env` and restart.
+- GRCh38 only. Without `ALPHAGENOME_API_KEY` the section explains how to enable it; the rest of the page is
+  unaffected.
+
 
 ## Feedback and follow-up questions
 
@@ -170,3 +197,5 @@ Open <http://127.0.0.1:5001/admin> while logged in as the administrator (or ente
 | "OncoKB not enabled" | No `ONCOKB_API_TOKEN` in `backend/.env`; CIViC is used alone. |
 | "PBS data has not been imported" | Run `flask --app run import-data pbs`. |
 | Comparison report: "API key not configured" | Add `OPENAI_API_KEY` to `backend/.env`. |
+| ISM section: "AlphaGenome is not configured on this server" | Add `ALPHAGENOME_API_KEY` to `backend/.env` and run `pip install -r requirements-alphagenome.txt`, then restart. |
+| ISM heatmap: "AlphaGenome request failed" | The AlphaGenome service is down or the key's quota is used up. The rest of the report is unaffected; try again later. |

@@ -23,6 +23,7 @@ export const api = {
   vcfOptions: () => request("GET", "/api/vcf/options"),
   vcfExplore: (form) => request("POST", "/api/vcf/explore", { form }),
   vcfExploreExample: (body) => request("POST", "/api/vcf/explore", { body }),
+  vcfIsm: (body) => request("POST", "/api/vcf/ism", { body }),
   explore: (body) => request("POST", "/api/explore", { body }),
   getQuery: (id) => request("GET", `/api/queries/${id}`),
   history: () => request("GET", "/api/queries?mine=1&limit=10"),
