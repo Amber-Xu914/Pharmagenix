@@ -39,16 +39,21 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True, "pool_recycle": 280}
 
-    # LLM providers. "primary" answers every query; "comparison" runs when the user asks for it.
-    PRIMARY_PROVIDER = "openai"
-    COMPARISON_PROVIDER = "anthropic"
+    # LLM providers. "primary" answers every query (and runs the Workflow 4 agents); "comparison" runs when the user
+    # asks for it.
+    PRIMARY_PROVIDER = os.getenv("PRIMARY_PROVIDER", "anthropic")
+    COMPARISON_PROVIDER = os.getenv("COMPARISON_PROVIDER", "openai")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-6-luna")
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-    ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+    # Claude Sonnet 4.6: the newest Claude line that still accepts a temperature (4.7+ / 5.x models reject one)
+    ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
     LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4000"))
     LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "90"))
-    LLM_TEMPERATURE = _float_or_none(os.getenv("LLM_TEMPERATURE"))
+    # Per provider: empty = the model's default. 0.3 keeps Claude's evidence summaries consistent between runs;
+    # gpt-6-luna is a reasoning model and rejects any temperature.
+    ANTHROPIC_TEMPERATURE = _float_or_none(os.getenv("ANTHROPIC_TEMPERATURE", "0.3"))
+    OPENAI_TEMPERATURE = _float_or_none(os.getenv("OPENAI_TEMPERATURE"))
 
     # Biomedical sources
     DGIDB_URL = os.getenv("DGIDB_URL", "https://dgidb.org/api/graphql")
@@ -68,6 +73,15 @@ class Config:
     VEP_GRCH37_URL = os.getenv("VEP_GRCH37_URL", "https://grch37.rest.ensembl.org")
     ONCOKB_URL = os.getenv("ONCOKB_URL", "https://www.oncokb.org/api/v1")
     ONCOKB_API_TOKEN = os.getenv("ONCOKB_API_TOKEN", "")
+    # Workflow 4, last section: AlphaGenome in-silico mutagenesis around each QC-passed variant (optional; needs
+    # requirements-alphagenome.txt and a key from https://deepmind.google.com/science/alphagenome). GRCh38 only.
+    ALPHAGENOME_API_KEY = os.getenv("ALPHAGENOME_API_KEY", "")
+    ALPHAGENOME_ISM_OUTPUT = os.getenv("ALPHAGENOME_ISM_OUTPUT", "RNA_SEQ")  # RNA_SEQ | SPLICE_SITES | DNASE | ATAC | CAGE ...
+    ALPHAGENOME_ISM_TISSUE = os.getenv("ALPHAGENOME_ISM_TISSUE", "UBERON:0002048")  # lung; "" = all tissues
+    ALPHAGENOME_ISM_FLANK = int(os.getenv("ALPHAGENOME_ISM_FLANK", "10"))  # bases each side: 21 positions x 3 = 63 SNVs
+    ALPHAGENOME_SEQUENCE_LENGTH = os.getenv("ALPHAGENOME_SEQUENCE_LENGTH", "1MB")  # context: 16KB | 100KB | 500KB | 1MB
+    ALPHAGENOME_ISM_MAX_VARIANTS = int(os.getenv("ALPHAGENOME_ISM_MAX_VARIANTS", "10"))  # variants offered in the report
+    ALPHAGENOME_TIMEOUT = float(os.getenv("ALPHAGENOME_TIMEOUT", "30"))  # seconds to connect
 
     # Local reference datasets (imported with `flask --app run import-data`)
     HGNC_URL = os.getenv(
@@ -146,5 +160,7 @@ class TestConfig(Config):
     PBS_MIN_INTERVAL = 0
     ONCOKB_API_TOKEN = ""  # no live OncoKB calls from tests, even with a token in .env
     HTTP_CACHE = "off"  # tests never read or write the response store
+    PRIMARY_PROVIDER, COMPARISON_PROVIDER = "openai", "anthropic"  # fixed, whatever .env says
     VCF_LITERATURE_RANKER = "keyword"  # tests never load MedCPT
+    ALPHAGENOME_API_KEY = ""  # no live AlphaGenome calls from tests
     MLFLOW_TRACKING_URI = ""  # tests that need MLflow turn it on themselves

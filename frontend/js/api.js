@@ -18,15 +18,30 @@ async function request(method, path, { body, form, headers = {} } = {}) {
   return data;
 }
 
+/** A file download (the Word report): the blob and the file name the server gave it. */
+async function download(method, path, body) {
+  const resp = await fetch(API_BASE + path, {
+    method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw new Error(data.error || `HTTP ${resp.status}`);
+  }
+  const name = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(resp.headers.get("Content-Disposition") || "")?.[1];
+  return { blob: await resp.blob(), filename: name ? decodeURIComponent(name) : "Pharmagenix_report.docx" };
+}
+
 export const api = {
   meta: () => request("GET", "/api/meta"),
   vcfOptions: () => request("GET", "/api/vcf/options"),
   vcfExplore: (form) => request("POST", "/api/vcf/explore", { form }),
   vcfExploreExample: (body) => request("POST", "/api/vcf/explore", { body }),
+  vcfIsm: (body) => request("POST", "/api/vcf/ism", { body }),
   explore: (body) => request("POST", "/api/explore", { body }),
   getQuery: (id) => request("GET", `/api/queries/${id}`),
   history: () => request("GET", "/api/queries?mine=1&limit=10"),
   ask: (id, body) => request("POST", `/api/queries/${id}/ask`, { body }),
+  reportDocx: (id, body) => download("POST", `/api/queries/${id}/report.docx`, body),
   feedback: (reportId, body) => request("POST", `/api/reports/${reportId}/feedback`, { body }),
   me: () => request("GET", "/api/auth/me"),
   login: (body) => request("POST", "/api/auth/login", { body }),

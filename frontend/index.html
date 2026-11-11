@@ -112,7 +112,7 @@
           </fieldset>
 
           <div class="options small">
-            <label class="chip"><input id="compare" type="checkbox"> <span id="compare-label">Generate comparison report (with Claude)</span></label>
+            <label class="chip"><input id="compare" type="checkbox"> <span id="compare-label" class="compare-label">Generate comparison report</span></label>
           </div>
         </form>
 
@@ -147,7 +147,7 @@
             </fieldset>
           </div>
           <div class="options small">
-            <label class="chip"><input id="vcf-compare" type="checkbox"> <span>Generate comparison report (with Claude)</span></label>
+            <label class="chip"><input id="vcf-compare" type="checkbox"> <span class="compare-label">Generate comparison report</span></label>
             <button id="vcf-submit" type="submit">Predict candidate drugs</button>
           </div>
           <p id="vcf-ready" class="report-warning small hidden"></p>
@@ -179,6 +179,10 @@
 
     <!-- AI answer first; the structured data it cites follows -->
     <section id="sec-overview" class="card section ai-card">
+      <div class="report-actions">
+        <button id="report-docx" class="secondary small" type="button">Download report (.docx)</button>
+        <span id="report-docx-status" class="small muted" role="status"></span>
+      </div>
       <!-- Rule-based "no known interaction" verdict; not written by the AI -->
       <div id="verdict"></div>
       <div id="reports"></div>
@@ -188,7 +192,7 @@
         <form id="ask-form" class="stack">
           <textarea id="followup" rows="3" placeholder="For example: focus on how CYP2C19*17 affects the response to clopidogrel"></textarea>
           <div class="row">
-            <label class="chip"><input id="ask-compare" type="checkbox"> Generate comparison report (with Claude)</label>
+            <label class="chip"><input id="ask-compare" type="checkbox"> <span class="compare-label">Generate comparison report</span></label>
             <button type="submit">Regenerate from current evidence</button>
           </div>
           <p class="muted small">Existing data are reused. Use the search box at the top of the page to search another gene.</p>
@@ -267,9 +271,14 @@
       <a href="#vcf-sec-network">Variant–drug network</a>
       <a href="#vcf-sec-appendix">Appendix</a>
       <a href="#vcf-sec-limits">Limitations</a>
+      <a href="#vcf-sec-ism">ISM heatmap</a>
     </nav>
 
     <section id="vcf-sec-overview" class="card section ai-card">
+      <div class="report-actions">
+        <button id="vcf-report-docx" class="secondary small" type="button">Download report (.docx)</button>
+        <span id="vcf-report-docx-status" class="small muted" role="status"></span>
+      </div>
       <div id="vcf-verdict"></div>
       <div id="vcf-reports"></div>
       <details class="ask">
@@ -277,7 +286,7 @@
         <form id="vcf-ask-form" class="stack">
           <textarea id="vcf-followup" rows="3" placeholder="For example: why is gefitinib down-ranked for this sample?"></textarea>
           <div class="row">
-            <label class="chip"><input id="vcf-ask-compare" type="checkbox"> Generate comparison report (with Claude)</label>
+            <label class="chip"><input id="vcf-ask-compare" type="checkbox"> <span class="compare-label">Generate comparison report</span></label>
             <button type="submit">Regenerate from current evidence</button>
           </div>
           <p class="muted small">The stored evidence is reused; the uploaded file itself is not kept.</p>
@@ -320,6 +329,12 @@
     <section id="vcf-sec-limits" class="card section">
       <div class="section-head"><h2>Limitations</h2></div>
       <div id="vcf-limits"></div>
+    </section>
+
+    <section id="vcf-sec-ism" class="card section">
+      <div class="section-head"><h2>In-silico mutagenesis (AlphaGenome)</h2>
+        <span class="muted small">Predicted effect of every single-base change around each variant that passed QC</span></div>
+      <div id="vcf-ism"></div>
     </section>
   </main>
 

@@ -4,6 +4,7 @@ import { NetworkView } from "./network.js";
 import {
   headlineNumbers, interactionRows, pgxAlerts, queryGene, renderAlerts, renderHeader, renderLiterature, renderPgx,
 } from "./profile.js";
+import { downloadReport } from "./report.js";
 import { renderReports } from "./summary.js";
 import { DgiTable } from "./table.js";
 import { categoryColor, el } from "./util.js";
@@ -51,10 +52,14 @@ async function init() {
   }
   renderRelationChips();
   renderDataVersion(state.meta.reference_data || []);
-  const comparison = state.meta.providers.comparison;
-  $("compare-label").textContent = `Generate comparison report (with Claude)${comparison.enabled ? "" : " — API key not configured"}`;
+  const comparison = state.meta.providers.comparison; // the second model, named from the backend config
+  document.querySelectorAll(".compare-label").forEach((label) => {
+    label.textContent = `Generate comparison report (with ${comparison.model})${comparison.enabled ? "" : " — API key not configured"}`;
+  });
 
   initVcf({ run: (task, message) => withBusy([$("vcf-submit")], message, task) });
+  $("report-docx").addEventListener("click", () =>
+    downloadReport(state.query, network, $("report-docx"), $("report-docx-status")));
 
   const queryId = new URLSearchParams(location.search).get("q");
   if (queryId) {
@@ -123,6 +128,7 @@ async function withBusy(buttons, message, task) {
 /** Render a query result. hash: a section to scroll to (from a shared link such as ?q=2#sec-pgx). */
 function showQuery(query, { hash = "" } = {}) {
   state.query = query;
+  $("report-docx-status").textContent = "";
   const evidence = query.evidence || {};
   const section = /^#(vcf-)?sec-/.test(hash) ? document.querySelector(hash) : null;
   history.replaceState(null, "", `?q=${query.id}${section ? hash : ""}`);

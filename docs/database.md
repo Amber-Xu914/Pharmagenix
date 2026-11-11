@@ -149,7 +149,7 @@ erDiagram
 | --- | --- | --- |
 | `users` | account | Login (email + salted password hash); `is_admin` opens the admin console |
 | `queries` | search | What was asked (gene, drug or VCF sample, relation types, follow-up question), by whom (`user_id`), when, and the evidence bundle shown on the results page. A follow-up points to its parent (`parent_id`). *Prompts, Query_History* |
-| `query_interactions` | drug–gene evidence item of a search | The drug–gene pairs a search found: gene (HGNC ID), drug (ChEMBL ID), relation, evidence level, score and source. *Interactions* |
+| `query_interactions` | drug–gene evidence item of a search | The drug–gene pairs a search found: gene (symbol and HGNC ID), drug (the name the source used, and its ChEMBL ID when known), relation, evidence level, score and source. *Interactions* |
 | `reports` | LLM answer | The narrative an LLM wrote for a search (primary, comparison model or Workflow 4 agent), its status, model, latency and token use. *LLM_Responses* |
 | `citations` | evidence item cited by a report | Which evidence a report cited, in order, with its source and PubMed ID; `valid = 0` marks a citation to evidence that was not in the prompt. *Citations* |
 | `prompt_templates` | template version | Editable prompt templates; editing creates a new version so old reports stay reproducible |
@@ -507,9 +507,11 @@ The tables are in third normal form:
 - **2NF**: every table has a single-column surrogate or natural key (`id`, `hgnc_id`, `chembl_id`, `res_code`), so
   no attribute depends on part of a key. Composite uniqueness is enforced with unique constraints, e.g.
   (`report_id`, `evidence_id`) in `citations`, (`name`, `version`) in `prompt_templates`.
-- **3NF**: facts about an entity live with that entity only. A gene's name and identifiers are stored once in
-  `genes`, not repeated in every search; `query_interactions` stores the HGNC and ChEMBL IDs and joins to `genes` /
-  `drugs` for the rest. A user's email lives only in `users`; queries and feedback point to it by `user_id`.
+- **3NF**: facts about an entity live with that entity only. A gene's full name, location, locus type and
+  cross-references (Entrez, Ensembl, UniProt) are stored once in `genes`, and a drug's preferred name, type and
+  approval in `drugs`; a search's interaction rows carry only the HGNC and ChEMBL IDs and join to those tables for
+  the rest. A user's email lives only in `users`; queries and feedback point to it by `user_id`. The one redundant
+  column the application tables keep on purpose is `query_interactions.gene_symbol` (see below).
 
 Foreign keys enforce the application relationships (`ON DELETE CASCADE` from a search to its reports, citations and
 interactions; `ON DELETE SET NULL` from a deleted user, so their searches stay for the audit trail).
@@ -524,6 +526,19 @@ interactions; `ON DELETE SET NULL` from a deleted user, so their searches stay f
 - **`query_interactions.hgnc_id` / `chembl_id`** are indexed but not declared as foreign keys, because
   `import-data` replaces the reference tables wholesale; the IDs themselves are stable across releases. The ER
   diagram draws these as dotted "logical" links.
+- **`query_interactions.gene_symbol`** repeats `genes.symbol` whenever `hgnc_id` is set (a transitive dependency
+  `hgnc_id → symbol`). It is kept because `hgnc_id` is empty for a symbol that HGNC does not know, and so that a past
+  search still shows the symbol it was run with after HGNC renames a gene and `import-data` replaces `genes`.
+  Queries that need the current symbol join on `hgnc_id`.
+- **`query_interactions.drug_name`** is not a copy of `drugs.pref_name`: it is the name the source used in that
+  evidence record (DGIdb's "SALMETEROL XINAFOATE" for ChEMBL's SALMETEROL), and many investigational compounds have
+  no ChEMBL ID at all. It describes the evidence record, not the drug, so it does not depend on `chembl_id`.
+- **Reference tables keyed by `gene_symbol`** (`civic_evidence`, `cancer_hotspots`, `intogen_drivers`,
+  `subtype_gene_frequencies`, `gene_pathways`, the `cpic_*` allele tables) store each dataset with the identifiers
+  its source publishes. They are read-only copies, replaced as a whole on re-import and versioned in
+  `source_releases`, so the repeated symbols cannot drift apart through updates. Where a source gives HGNC IDs they
+  are stored as well (`cpic_pairs`, `drug_mechanisms`, `fda_pgx_biomarkers`, `clinpgx_*`); the links to `genes`
+  are logical (dotted in the ER diagram).
 - **`queries.entities` / `relation_types` (JSON)** are short lists (one gene, a few relation types) that are always
   read and written together with their query.
 

@@ -1,4 +1,8 @@
-from flask import Blueprint, jsonify, request
+import base64
+import binascii
+from io import BytesIO
+
+from flask import Blueprint, jsonify, request, send_file
 
 from ..accounts import current_user
 from ..errors import APIError
@@ -8,6 +12,7 @@ from ..reference.lookup import entity_details, latest_releases
 from ..services.explorer import run_exploration
 from ..services.vcf_explorer import run_vcf_followup
 from ..services.llm import provider_info
+from ..services.report_docx import DOCX_MIME, MAX_FIGURE_BYTES, build_report
 from ..services.relations import DEFAULT_RELATION_TYPES, RELATION_TYPES
 
 bp = Blueprint("explore", __name__)
@@ -93,3 +98,30 @@ def ask_again(query_id):
         entity_type=parent.entity_type if parent.entity_type in ("gene", "drug") else "gene",
     )
     return _query_response(query, 201)
+
+
+@bp.route("/queries/<int:query_id>/report.docx", methods=["GET", "POST"])
+def report_docx(query_id):
+    """The query as a Word report (services/report_docx.py). POST {figure: PNG data URL of the network,
+    figure_shown, figure_total} adds the network as Figure 1; GET gives the report without it."""
+    query = db.get_or_404(Query, query_id)
+    if query.status != "complete" or not query.evidence:
+        raise APIError("This search has no results to report")
+    figure, note = None, None
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        data_url = body.get("figure") or ""
+        if data_url:
+            encoded = data_url.split(",", 1)[-1]
+            if len(encoded) > MAX_FIGURE_BYTES * 4 // 3 + 4:
+                raise APIError("The figure is too large")
+            try:
+                figure = base64.b64decode(encoded, validate=True)
+            except (binascii.Error, ValueError):
+                raise APIError("The figure must be a base64-encoded PNG") from None
+        note = {"shown": body.get("figure_shown"), "total": body.get("figure_total")}
+    try:
+        content, filename = build_report(query.to_dict(), figure, note)
+    except ValueError as exc:  # a figure that is not a PNG
+        raise APIError(str(exc)) from None
+    return send_file(BytesIO(content), mimetype=DOCX_MIME, as_attachment=True, download_name=filename)

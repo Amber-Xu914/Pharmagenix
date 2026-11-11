@@ -7,7 +7,8 @@ curated reference datasets held in MySQL (HGNC, ChEMBL, CPIC, ClinPGx, DGIdb, th
 DGIdb, PharmGKB (ClinPGx), PubTator3, UniProt and DrugBank. An LLM then writes a narrative report in which every claim
 cites its evidence. Results are shown three ways (a text summary, a structured DGI table and a relationship network), plus the
 drugs' Australian PBS listing status.
-Users can rate answers, leave suggestions and ask follow-up questions, and can create an account and log in with
+Users can rate answers, leave suggestions, ask follow-up questions and download any result as a Word report
+(abstract, methods, results tables, network figure, the LLM discussion and numbered references), and can create an account and log in with
 their email address from the top-right corner of the explorer. An admin console shows prompt logs, lets
 admins edit prompt templates and lists failed responses.
 
@@ -16,7 +17,7 @@ admins edit prompt templates and lists failed responses.
 | Frontend | Plain JavaScript (ES modules, no build step), Cytoscape.js for the network, marked + DOMPurify for Markdown |
 | Backend  | Flask 3 + Flask-SQLAlchemy                                                                                  |
 | Database | MySQL 8 (developed on 8.4; uses JSON columns)                                                               |
-| LLM      | Primary: OpenAI (`OPENAI_MODEL`, default `gpt-6-luna`). Comparison: Claude Haiku 4.5                        |
+| LLM      | Primary: Claude Sonnet 4.6 (`ANTHROPIC_MODEL`, temperature 0.3). Comparison: OpenAI `gpt-6-luna`             |
 
 ## Quick start
 
@@ -228,6 +229,25 @@ Without it, or with `VCF_LITERATURE_RANKER=keyword`, papers and sentences are ra
 lung-cancer mentions instead. The first search after a restart loads the models (a few seconds; about 1–2 minutes the
 first time, while they download). Tests always use the keyword ranker.
 
+## In-silico mutagenesis heatmap (optional, AlphaGenome)
+
+The last section of the Workflow 4 report maps every single-base change in a ±10 bp window around each variant that
+passed QC (tiered and low-priority; 21 positions × 3 bases = 63 substitutions), scored by Google DeepMind's
+AlphaGenome against the GRCh38 reference. By default the score is the RNA-seq log fold change for the variant's gene,
+averaged over the lung tracks (`UBERON:0002048`); red raises it, blue lowers it, and the patient's own change is
+outlined. The page asks for one variant at a time (`POST /api/vcf/ism`), as each map takes tens of seconds; results are
+cached in memory.
+
+```bash
+pip install -r requirements-alphagenome.txt   # Python 3.11+
+# backend/.env: ALPHAGENOME_API_KEY=...  (free non-commercial key: https://deepmind.google.com/science/alphagenome)
+```
+
+`ALPHAGENOME_ISM_OUTPUT` switches the score to splicing (`SPLICE_SITES`) or chromatin (`DNASE`, `ATAC`, `CAGE`),
+`ALPHAGENOME_ISM_TISSUE` to another UBERON / CL term, `ALPHAGENOME_ISM_FLANK` the window. AlphaGenome models
+regulation (expression, splicing, chromatin), not protein function, so for a missense variant the map is not a
+pathogenicity call. Without a key the section says how to enable it.
+
 ## MLflow tracking (optional)
 
 Set `MLFLOW_TRACKING_URI` (e.g. `sqlite:///mlflow.db` in `backend/.env`) and every search, in both workflows, is
@@ -315,7 +335,10 @@ backend/
       explorer.py             orchestrates one gene search through the workflow stages
       vcf_explorer.py         orchestrates Workflow 4 (patient VCF)
       variants/               Workflow 4: parse (VCF / MAF), vep, oncokb, cancer_types, matching, biology,
-                              pipeline (deterministic tools), agents (exploration agents, LLM)
+                              pipeline (deterministic tools), agents (exploration agents, LLM),
+                              alphagenome (in-silico mutagenesis heatmap, optional)
+      report_docx.py          "Download report (.docx)": the Word report of a query
+    report_assets/            report_base.docx: styles, page layout, header and footer of the Word report
     mock_vcfs/                synthetic mock VCFs + manifest.json (Workflow 4 test data)
   scripts/make_mock_vcfs.py   regenerates the mock VCFs (positions from Ensembl VEP)
       workflow/               one module per stage: resolution, profiles, evidence
@@ -328,7 +351,7 @@ backend/
 frontend/
   index.html  admin.html
   css/style.css
-  js/ api.js  main.js  vcf.js  auth.js  background.js  profile.js  workflow.js  summary.js  table.js  network.js  availability.js  admin.js  util.js
+  js/ api.js  main.js  vcf.js  report.js  auth.js  background.js  profile.js  workflow.js  summary.js  table.js  network.js  availability.js  admin.js  util.js
 ```
 
 ## MLflow
@@ -365,6 +388,11 @@ cd backend && .venv/bin/flask --app run mlflow-eval --case mock_luad_kras_g12c
 
 ## Things to check and known limitations
 
+- **Models and temperature**: the primary model is Claude Sonnet 4.6 at temperature 0.3, so the evidence summaries
+  vary little between runs. It is the newest Claude that still accepts a temperature (Claude 4.7+ and 5.x reject one).
+  `gpt-6-luna` is a reasoning model and rejects any temperature, so `OPENAI_TEMPERATURE` stays empty. Swap the two
+  with `PRIMARY_PROVIDER` / `COMPARISON_PROVIDER`. The anthropic SDK 1.x has no `temperature` argument, so the client
+  sends it in the request body (`extra_body`).
 - **OpenAI model ID**: `.env` defaults to `gpt-6-luna`. Confirm the exact model ID for "GPT-6 Luna" in your OpenAI
   dashboard. Calls go through the Responses API. If it is a reasoning model, `LLM_MAX_TOKENS` also covers reasoning
   tokens, and a budget that is too small returns an empty answer (recorded as failed).

@@ -45,9 +45,10 @@ export class NetworkView {
       : "Select a node or edge to view details.";
   }
 
-  style() {
-    const text = cssVar("--text") || "#1c2430";
-    const bg = cssVar("--surface") || "#fff";
+  /** colors: { text, bg } to override the page theme (the report figure is always drawn in print colours). */
+  style(colors = {}) {
+    const text = colors.text || cssVar("--text") || "#1c2430";
+    const bg = colors.bg || cssVar("--surface") || "#fff";
     return [
       { selector: "node", style: {
         label: "data(label)", "font-size": 10, color: text, "text-valign": "bottom", "text-margin-y": 4,
@@ -78,6 +79,28 @@ export class NetworkView {
 
   fit() {
     this.cy?.fit(undefined, 30);
+  }
+
+  /** The network as a PNG for the Word report's Figure 1, or null when there is nothing to draw. It is laid out
+   * off-screen in print colours, so it works when the network tab was never opened and leaves the page's view alone. */
+  snapshot(network, edgeLimit = 60) {
+    if (!network?.edges?.length) return null;
+    const { nodes, edges } = selectElements(structuredClone(network), edgeLimit);
+    const box = el("div", { style: "position:fixed;left:-10000px;top:0;width:1000px;height:760px", "aria-hidden": "true" });
+    document.body.append(box);
+    try {
+      const cy = cytoscape({
+        container: box,
+        elements: { nodes, edges },
+        style: this.style({ text: "#1c2430", bg: "#ffffff" }),
+        layout: { name: "cose", animate: false, nodeRepulsion: 9000, idealEdgeLength: 90, randomize: true },
+      });
+      const figure = cy.png({ output: "base64uri", bg: "#ffffff", full: true, scale: 2, maxWidth: 2400 });
+      cy.destroy();
+      return { figure, figure_shown: edges.length, figure_total: network.edges.length };
+    } finally {
+      box.remove();
+    }
   }
 
   showNode(node) {

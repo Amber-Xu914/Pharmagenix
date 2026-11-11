@@ -9,7 +9,7 @@ Pharmagenix is a GenAI-powered drug–gene interaction (DGI) explorer. It answer
 | 🧪 **Patient VCF → candidate drugs** | a tumour's somatic variants (VCF / MAF) and its lung cancer type | ranked candidate drugs for the actionable variants, split into established evidence and exploratory predictions |
 
 Every answer has an LLM-written summary in which each claim cites its evidence (`[E3]`), a structured table, an
-interactive network and the source records. Users can rate answers, suggest improvements and ask follow-up questions.
+interactive network and the source records. Users can rate answers, suggest improvements, ask follow-up questions and download the result as a Word report.
 
 **Research and teaching use only.** Pharmagenix is not clinical advice. The VCF workflow is a lung cancer prototype
 and accepts synthetic test data only.
@@ -26,7 +26,7 @@ Create (or reset) them with `flask --app run seed-demo`. The admin console also 
 
 ## Starting the system
 
-Requirements: Python 3.12, MySQL 8, an OpenAI API key (primary model) and optionally an Anthropic key (comparison
+Requirements: Python 3.12, MySQL 8, an Anthropic API key (primary model, Claude Sonnet 4.6) and optionally an OpenAI key (comparison
 reports), all set in `backend/.env` (copy `backend/.env.example`).
 
 ```bash
@@ -56,7 +56,7 @@ newest first. Click one to reopen its stored result without searching again. Adm
    and press **Explore**.
 2. Optionally untick relationship types under **Relationship types**: Inhibition, Induction / activation, Binding,
    Metabolism, SNP-specific response and Unspecified. Only interactions of the ticked types are kept.
-3. Optionally tick **Generate comparison report (with Claude)** to get a second report from another model.
+3. Optionally tick **Generate comparison report (with gpt-6-luna)** to get a second report from another model.
 
 A search takes 20–60 seconds. If the name is unknown or ambiguous (e.g. a typo, or an alias shared by two genes),
 the search stops and suggests the closest gene symbols: pick one, or choose **Search as typed anyway**.
@@ -126,6 +126,48 @@ The results page has:
 - **Appendix**: every tiered and low-priority variant, the QC audit table (each filtered variant and why), the full
   drug lists, and **Retrieved literature**: the papers the Literature agent read, ranked by MedCPT, with the abstract
   sentences it was given.
+- **In-silico mutagenesis (AlphaGenome)**, at the bottom (see below).
+
+### In-silico mutagenesis heatmap (AlphaGenome)
+
+The last section maps how every possible single-base change around a variant would affect the gene, as predicted by
+Google DeepMind's AlphaGenome model. It covers the variants that passed QC (tiered first, then low priority).
+
+1. The first variant is scored automatically; press another variant's button to score it. Each takes 10–60 seconds
+   the first time, then it is cached until the server restarts.
+2. Read the grid: columns are genomic positions (±10 bp around the variant, its own position in bold), rows are the
+   four bases. Each cell is the predicted change if that position were mutated to that base. Grey **ref** cells are
+   the reference base. Red means the change raises the score, blue means it lowers it. The cell with a black outline
+   is the patient's own change.
+3. By default the score is the predicted RNA-seq expression change (log fold change) of the variant's gene in lung
+   tissue. The line above the grid says which output, tissue and gene were used.
+
+How to interpret it:
+
+- AlphaGenome predicts gene regulation (expression, splicing, chromatin) from the DNA sequence. It does not model
+  protein structure or function. For a missense variant such as EGFR L858R, the values are therefore small (around
+  0.001–0.005). That is expected: the change alters the protein, not how much of it is made. Values like these do
+  not say whether the variant is pathogenic or drug-sensitive; Sections A and B do that.
+- The map is most informative for variants near splice sites, promoters or other regulatory sequence. To see
+  splicing effects instead, set `ALPHAGENOME_ISM_OUTPUT=SPLICE_SITES` in `backend/.env` and restart.
+- GRCh38 only. Without `ALPHAGENOME_API_KEY` the section explains how to enable it; the rest of the page is
+  unaffected.
+
+## Downloading a report (.docx)
+
+Every results page (gene, drug or patient VCF) has **Download report (.docx)** at the top of the overview. It saves a
+Word document in the style of a short research report:
+
+- an abstract (objective, methods, results, conclusion) and the methods actually used for this search: the data
+  sources with their versions and record counts, and the grading or tiering rules;
+- the results tables (graded drug–gene pairs, CPIC guidelines, PharmGKB annotations and PBS listing; or, for a VCF,
+  the tiered variants and the established and exploratory tracks), and the network as Figure 1;
+- the LLM report as the Discussion, marked as machine-written, with its evidence IDs turned into numbered references;
+- the reference list, and appendices with the QC audit (VCF) and the query's provenance (time, models, prompt
+  template versions, citation checks).
+
+Everything except the Discussion is built from the stored results by fixed rules, so the document always matches the
+page and can be downloaded again later from **My recent queries**. File name: `Pharmagenix_report_PGX-<query>_<gene>.docx`.
 
 ## Feedback and follow-up questions
 
@@ -159,6 +201,8 @@ Open <http://127.0.0.1:5001/admin> while logged in as the administrator (or ente
    stored answers. The LLM reports still need the internet; earlier results can always be reopened from **My recent
    queries**.
 3. Log in as `demo@pharmagenix.test` beforehand and run the searches you will show, so they are in the history.
+4. If you will show the ISM heatmap, open each VCF result once beforehand so the heatmaps are cached (the cache is
+   lost when the server restarts), and download each Word report once to check it opens.
 
 ## Troubleshooting
 
@@ -169,4 +213,6 @@ Open <http://127.0.0.1:5001/admin> while logged in as the administrator (or ente
 | A source pill shows "failed" | That source did not answer; the others still did. The report says the result may be incomplete. |
 | "OncoKB not enabled" | No `ONCOKB_API_TOKEN` in `backend/.env`; CIViC is used alone. |
 | "PBS data has not been imported" | Run `flask --app run import-data pbs`. |
-| Comparison report: "API key not configured" | Add `ANTHROPIC_API_KEY` to `backend/.env`. |
+| Comparison report: "API key not configured" | Add `OPENAI_API_KEY` to `backend/.env`. |
+| ISM section: "AlphaGenome is not configured on this server" | Add `ALPHAGENOME_API_KEY` to `backend/.env` and run `pip install -r requirements-alphagenome.txt`, then restart. |
+| ISM heatmap: "AlphaGenome request failed" | The AlphaGenome service is down or the key's quota is used up. The rest of the report is unaffected; try again later. |
