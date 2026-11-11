@@ -470,3 +470,22 @@ def test_ism_scalar_picks_the_gene_and_tissue():
     assert _scalar(adata, "EGFR", "UBERON:0002048") == (2.0, 2, True, "EGFR")
     # Unknown tissue: every track; unknown gene: the gene that moves most
     assert _scalar(adata, "KRAS", "CL:0000000") == (20.0, 3, False, "SEC61G")
+
+
+def test_vcf_word_report(client, vcf_reference, stub_live, monkeypatch):
+    import re
+    import zipfile
+    from io import BytesIO
+
+    monkeypatch.setattr("app.services.llm.report_generator.get_llm_client", lambda provider: FakeLLM([]))
+    data = client.post("/api/vcf/explore", json={"example": "mock_luad_egfr_l858r_t790m"}).get_json()
+    resp = client.get(f"/api/queries/{data['id']}/report.docx")
+    assert resp.status_code == 200 and "_EGFR_LUAD.docx" in resp.headers["Content-Disposition"]
+    xml = zipfile.ZipFile(BytesIO(resp.data)).read("word/document.xml").decode()
+    text = re.sub(r"<[^>]+>", "", xml)
+    assert "Candidate therapies for a lung adenocarcinoma variant profile" in text
+    for heading in ("Tiered variants.", "Established track", "Exploratory track", "Appendix A: Variants excluded",
+                    "4.1 Analysis", "4.4 Hypotheses"):
+        assert heading in text
+    assert "Osimertinib" in text and "EGFR p.T790M" in text
+    assert set(re.findall(r'w:anchor="(ref_\d+)"', xml)) <= set(re.findall(r'w:name="(ref_\d+)"', xml))

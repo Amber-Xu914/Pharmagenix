@@ -9,7 +9,7 @@ Pharmagenix is a GenAI-powered drug–gene interaction (DGI) explorer. It answer
 | 🧪 **Patient VCF → candidate drugs** | a tumour's somatic variants (VCF / MAF) and its lung cancer type | ranked candidate drugs for the actionable variants, split into established evidence and exploratory predictions |
 
 Every answer has an LLM-written summary in which each claim cites its evidence (`[E3]`), a structured table, an
-interactive network and the source records. Users can rate answers, suggest improvements and ask follow-up questions.
+interactive network and the source records. Users can rate answers, suggest improvements, ask follow-up questions and download the result as a Word report.
 
 **Research and teaching use only.** Pharmagenix is not clinical advice. The VCF workflow is a lung cancer prototype
 and accepts synthetic test data only.
@@ -153,6 +153,21 @@ How to interpret it:
 - GRCh38 only. Without `ALPHAGENOME_API_KEY` the section explains how to enable it; the rest of the page is
   unaffected.
 
+## Downloading a report (.docx)
+
+Every results page (gene, drug or patient VCF) has **Download report (.docx)** at the top of the overview. It saves a
+Word document in the style of a short research report:
+
+- an abstract (objective, methods, results, conclusion) and the methods actually used for this search: the data
+  sources with their versions and record counts, and the grading or tiering rules;
+- the results tables (graded drug–gene pairs, CPIC guidelines, PharmGKB annotations and PBS listing; or, for a VCF,
+  the tiered variants and the established and exploratory tracks), and the network as Figure 1;
+- the LLM report as the Discussion, marked as machine-written, with its evidence IDs turned into numbered references;
+- the reference list, and appendices with the QC audit (VCF) and the query's provenance (time, models, prompt
+  template versions, citation checks).
+
+Everything except the Discussion is built from the stored results by fixed rules, so the document always matches the
+page and can be downloaded again later from **My recent queries**. File name: `Pharmagenix_report_PGX-<query>_<gene>.docx`.
 
 ## Feedback and follow-up questions
 
@@ -186,6 +201,8 @@ Open <http://127.0.0.1:5001/admin> while logged in as the administrator (or ente
    stored answers. The LLM reports still need the internet; earlier results can always be reopened from **My recent
    queries**.
 3. Log in as `demo@pharmagenix.test` beforehand and run the searches you will show, so they are in the history.
+4. If you will show the ISM heatmap, open each VCF result once beforehand so the heatmaps are cached (the cache is
+   lost when the server restarts), and download each Word report once to check it opens.
 
 ## Troubleshooting
 

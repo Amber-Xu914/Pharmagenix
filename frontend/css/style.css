@@ -749,3 +749,6 @@ footer { text-align: center; color: var(--muted); font-size: 0.8rem; padding: 20
 .ism-legend { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .ism-legend .ramp { width: 160px; height: 10px; border-radius: 3px;
   background: linear-gradient(90deg, var(--ism-neg), var(--surface-2), var(--ism-pos)); }
+
+/* Word report download, top right of the overview card */
+.report-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-bottom: 8px; }

@@ -179,6 +179,10 @@
 
     <!-- AI answer first; the structured data it cites follows -->
     <section id="sec-overview" class="card section ai-card">
+      <div class="report-actions">
+        <button id="report-docx" class="secondary small" type="button">Download report (.docx)</button>
+        <span id="report-docx-status" class="small muted" role="status"></span>
+      </div>
       <!-- Rule-based "no known interaction" verdict; not written by the AI -->
       <div id="verdict"></div>
       <div id="reports"></div>
@@ -271,6 +275,10 @@
     </nav>
 
     <section id="vcf-sec-overview" class="card section ai-card">
+      <div class="report-actions">
+        <button id="vcf-report-docx" class="secondary small" type="button">Download report (.docx)</button>
+        <span id="vcf-report-docx-status" class="small muted" role="status"></span>
+      </div>
       <div id="vcf-verdict"></div>
       <div id="vcf-reports"></div>
       <details class="ask">

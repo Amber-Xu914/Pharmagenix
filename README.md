@@ -7,7 +7,8 @@ curated reference datasets held in MySQL (HGNC, ChEMBL, CPIC, ClinPGx, DGIdb, th
 DGIdb, PharmGKB (ClinPGx), PubTator3, UniProt and DrugBank. An LLM then writes a narrative report in which every claim
 cites its evidence. Results are shown three ways (a text summary, a structured DGI table and a relationship network), plus the
 drugs' Australian PBS listing status.
-Users can rate answers, leave suggestions and ask follow-up questions, and can create an account and log in with
+Users can rate answers, leave suggestions, ask follow-up questions and download any result as a Word report
+(abstract, methods, results tables, network figure, the LLM discussion and numbered references), and can create an account and log in with
 their email address from the top-right corner of the explorer. An admin console shows prompt logs, lets
 admins edit prompt templates and lists failed responses.
 
@@ -336,6 +337,8 @@ backend/
       variants/               Workflow 4: parse (VCF / MAF), vep, oncokb, cancer_types, matching, biology,
                               pipeline (deterministic tools), agents (exploration agents, LLM),
                               alphagenome (in-silico mutagenesis heatmap, optional)
+      report_docx.py          "Download report (.docx)": the Word report of a query
+    report_assets/            report_base.docx: styles, page layout, header and footer of the Word report
     mock_vcfs/                synthetic mock VCFs + manifest.json (Workflow 4 test data)
   scripts/make_mock_vcfs.py   regenerates the mock VCFs (positions from Ensembl VEP)
       workflow/               one module per stage: resolution, profiles, evidence
@@ -348,7 +351,7 @@ backend/
 frontend/
   index.html  admin.html
   css/style.css
-  js/ api.js  main.js  vcf.js  auth.js  background.js  profile.js  workflow.js  summary.js  table.js  network.js  availability.js  admin.js  util.js
+  js/ api.js  main.js  vcf.js  report.js  auth.js  background.js  profile.js  workflow.js  summary.js  table.js  network.js  availability.js  admin.js  util.js
 ```
 
 ## MLflow

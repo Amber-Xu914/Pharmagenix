@@ -6,6 +6,7 @@
 import { api } from "./api.js";
 import { restrictionList } from "./availability.js";
 import { NetworkView } from "./network.js";
+import { downloadReport } from "./report.js";
 import { renderReports } from "./summary.js";
 import { el, focusEvidence } from "./util.js";
 import { SOURCE_NAMES, cacheNotice, renderTrace, sourcesChecked } from "./workflow.js";
@@ -34,6 +35,7 @@ const network = new NetworkView({
   categories: ["variant_of", "sensitive", "gene_link", "resistant"],
 });
 let options = null;
+let currentQuery = null; // for the report download
 
 function refLink(eid) {
   return el("a", { class: "ref", href: "#", onclick: (e) => { e.preventDefault(); focusEvidence(eid); } }, eid);
@@ -137,6 +139,8 @@ export async function initVcf({ run }) {
     run(() => api.ask(id, body), "Regenerating the analysis and agent reports from the existing evidence…");
   });
   $("vcf-network-fit").addEventListener("click", () => network.fit());
+  $("vcf-report-docx").addEventListener("click", () => downloadReport(currentQuery, network, $("vcf-report-docx"),
+    $("vcf-report-docx-status")));
 }
 
 function setMode(mode) {
@@ -180,6 +184,8 @@ function withAgentTrace(query) {
 
 export function renderVcfQuery(query) {
   const evidence = query.evidence || {};
+  currentQuery = query;
+  $("vcf-report-docx-status").textContent = "";
   $("vcf-results").dataset.queryId = query.id;
   setMode("vcf");
   renderHeader(query, evidence);
