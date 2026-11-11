@@ -97,6 +97,25 @@ def register_cli(app):
         click.echo(f"\nDetails: MLflow UI -> experiment {app.config['MLFLOW_EXPERIMENT_PREFIX']}-vcf -> Evaluation runs "
                    f"(run {result.run_id})")
 
+    @app.cli.command("benchmark")
+    @click.option("--dry-run", is_flag=True, help="Build the evidence and print the plan; no LLM calls.")
+    @click.option("--rescore", is_flag=True, help="Recompute the metrics from the saved reports; no LLM calls.")
+    @click.option("--case", "cases", multiple=True, help="Only this case (repeatable): a mock VCF id, gene or drug.")
+    @click.option("--arm", "arms", multiple=True, type=click.Choice(["grounded-primary", "grounded-comparison",
+                                                                     "ungrounded-primary"]))
+    def benchmark(dry_run, rescore, cases, arms):
+        """Grounded vs. ungrounded LLM reports on the mock VCFs and demo searches (app/benchmark.py); writes
+        docs/evaluation/benchmark.md, benchmark_cases.csv and benchmark_reports.json."""
+        from .benchmark import OUT_DIR, rescore as rescore_saved, run
+
+        if rescore:
+            rescore_saved(echo=click.echo)
+            click.echo(f"\nResults: {OUT_DIR / 'benchmark.md'}")
+            return
+        summary = run(arms=list(arms) or None, only=list(cases) or None, dry_run=dry_run, echo=click.echo)
+        if summary:
+            click.echo(f"\nResults: {OUT_DIR / 'benchmark.md'}")
+
     @app.cli.command("dump-schema")
     def dump_schema():
         """Print MySQL DDL generated from the models (used to produce schema.sql)."""

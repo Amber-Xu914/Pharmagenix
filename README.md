@@ -47,6 +47,7 @@ admin account, or with the `ADMIN_TOKEN` from `.env`).
 
 - **User manual** (sample logins, every workflow, admin console, demo checklist): [docs/USER_MANUAL.md](docs/USER_MANUAL.md)
 - **Database design** (ER diagrams, tables, normalisation, example SQL): [docs/database.md](docs/database.md)
+- **Evaluation** (pipeline accuracy; grounded vs. ungrounded LLM benchmark with statistics): [docs/evaluation/README.md](docs/evaluation/README.md)
 
 Upgrading a database created by an earlier version: `flask --app run upgrade-db` (adds the new columns and tables,
 moves report citations out of JSON; safe to re-run). Before a demo, `flask --app run warm-cache` stores the live API
