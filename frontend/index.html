@@ -112,7 +112,7 @@
           </fieldset>
 
           <div class="options small">
-            <label class="chip"><input id="compare" type="checkbox"> <span id="compare-label">Generate comparison report (with Claude)</span></label>
+            <label class="chip"><input id="compare" type="checkbox"> <span id="compare-label" class="compare-label">Generate comparison report</span></label>
           </div>
         </form>
 
@@ -147,7 +147,7 @@
             </fieldset>
           </div>
           <div class="options small">
-            <label class="chip"><input id="vcf-compare" type="checkbox"> <span>Generate comparison report (with Claude)</span></label>
+            <label class="chip"><input id="vcf-compare" type="checkbox"> <span class="compare-label">Generate comparison report</span></label>
             <button id="vcf-submit" type="submit">Predict candidate drugs</button>
           </div>
           <p id="vcf-ready" class="report-warning small hidden"></p>
@@ -188,7 +188,7 @@
         <form id="ask-form" class="stack">
           <textarea id="followup" rows="3" placeholder="For example: focus on how CYP2C19*17 affects the response to clopidogrel"></textarea>
           <div class="row">
-            <label class="chip"><input id="ask-compare" type="checkbox"> Generate comparison report (with Claude)</label>
+            <label class="chip"><input id="ask-compare" type="checkbox"> <span class="compare-label">Generate comparison report</span></label>
             <button type="submit">Regenerate from current evidence</button>
           </div>
           <p class="muted small">Existing data are reused. Use the search box at the top of the page to search another gene.</p>
@@ -277,7 +277,7 @@
         <form id="vcf-ask-form" class="stack">
           <textarea id="vcf-followup" rows="3" placeholder="For example: why is gefitinib down-ranked for this sample?"></textarea>
           <div class="row">
-            <label class="chip"><input id="vcf-ask-compare" type="checkbox"> Generate comparison report (with Claude)</label>
+            <label class="chip"><input id="vcf-ask-compare" type="checkbox"> <span class="compare-label">Generate comparison report</span></label>
             <button type="submit">Regenerate from current evidence</button>
           </div>
           <p class="muted small">The stored evidence is reused; the uploaded file itself is not kept.</p>

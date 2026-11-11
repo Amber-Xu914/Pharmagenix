@@ -51,8 +51,10 @@ async function init() {
   }
   renderRelationChips();
   renderDataVersion(state.meta.reference_data || []);
-  const comparison = state.meta.providers.comparison;
-  $("compare-label").textContent = `Generate comparison report (with Claude)${comparison.enabled ? "" : " — API key not configured"}`;
+  const comparison = state.meta.providers.comparison; // the second model, named from the backend config
+  document.querySelectorAll(".compare-label").forEach((label) => {
+    label.textContent = `Generate comparison report (with ${comparison.model})${comparison.enabled ? "" : " — API key not configured"}`;
+  });
 
   initVcf({ run: (task, message) => withBusy([$("vcf-submit")], message, task) });
 

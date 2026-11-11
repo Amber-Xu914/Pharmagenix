@@ -26,7 +26,7 @@ Create (or reset) them with `flask --app run seed-demo`. The admin console also 
 
 ## Starting the system
 
-Requirements: Python 3.12, MySQL 8, an OpenAI API key (primary model) and optionally an Anthropic key (comparison
+Requirements: Python 3.12, MySQL 8, an Anthropic API key (primary model, Claude Sonnet 4.6) and optionally an OpenAI key (comparison
 reports), all set in `backend/.env` (copy `backend/.env.example`).
 
 ```bash
@@ -56,7 +56,7 @@ newest first. Click one to reopen its stored result without searching again. Adm
    and press **Explore**.
 2. Optionally untick relationship types under **Relationship types**: Inhibition, Induction / activation, Binding,
    Metabolism, SNP-specific response and Unspecified. Only interactions of the ticked types are kept.
-3. Optionally tick **Generate comparison report (with Claude)** to get a second report from another model.
+3. Optionally tick **Generate comparison report (with gpt-6-luna)** to get a second report from another model.
 
 A search takes 20–60 seconds. If the name is unknown or ambiguous (e.g. a typo, or an alias shared by two genes),
 the search stops and suggests the closest gene symbols: pick one, or choose **Search as typed anyway**.
@@ -169,4 +169,4 @@ Open <http://127.0.0.1:5001/admin> while logged in as the administrator (or ente
 | A source pill shows "failed" | That source did not answer; the others still did. The report says the result may be incomplete. |
 | "OncoKB not enabled" | No `ONCOKB_API_TOKEN` in `backend/.env`; CIViC is used alone. |
 | "PBS data has not been imported" | Run `flask --app run import-data pbs`. |
-| Comparison report: "API key not configured" | Add `ANTHROPIC_API_KEY` to `backend/.env`. |
+| Comparison report: "API key not configured" | Add `OPENAI_API_KEY` to `backend/.env`. |

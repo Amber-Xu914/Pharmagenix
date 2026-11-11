@@ -107,3 +107,42 @@ def test_explore_a_drug(client, fake_sources, monkeypatch):
 
 def test_explore_rejects_unknown_entity_type(client):
     assert client.post("/api/explore", json={"entity_type": "protein", "protein": "x"}).status_code == 400
+
+
+def test_default_models_and_temperatures(monkeypatch):
+    """Claude is the primary model at temperature 0.3; gpt-6-luna (a reasoning model) gets no temperature."""
+    import importlib
+
+    import app.config as config
+
+    for var in ("PRIMARY_PROVIDER", "COMPARISON_PROVIDER", "ANTHROPIC_MODEL", "ANTHROPIC_TEMPERATURE",
+                "OPENAI_TEMPERATURE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **kw: False)  # ignore the developer's .env
+    defaults = importlib.reload(config).Config
+    try:
+        assert (defaults.PRIMARY_PROVIDER, defaults.COMPARISON_PROVIDER) == ("anthropic", "openai")
+        assert (defaults.ANTHROPIC_MODEL, defaults.ANTHROPIC_TEMPERATURE) == ("claude-sonnet-4-6", 0.3)
+        assert defaults.OPENAI_TEMPERATURE is None
+    finally:
+        monkeypatch.undo()
+        importlib.reload(config)
+
+
+def test_claude_temperature_goes_in_extra_body(monkeypatch):
+    """anthropic SDK 1.x has no temperature argument; the API takes it from the request body."""
+    from types import SimpleNamespace
+
+    from app.services.llm.anthropic_client import AnthropicClient
+
+    sent = {}
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            sent.update(kwargs)
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text="OK")], model="m", stop_reason="end_turn",
+                                   usage=SimpleNamespace(input_tokens=1, output_tokens=1))
+
+    monkeypatch.setattr("anthropic.Anthropic", lambda **kw: SimpleNamespace(messages=FakeMessages()))
+    AnthropicClient(api_key="k", model="claude-sonnet-4-6", temperature=0.3).complete("s", "u")
+    assert sent["extra_body"] == {"temperature": 0.3} and "temperature" not in sent

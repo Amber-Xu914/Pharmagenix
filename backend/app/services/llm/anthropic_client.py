@@ -17,7 +17,8 @@ class AnthropicClient(LLMClient):
             "messages": [{"role": "user", "content": user}],
         }
         if self.temperature is not None:
-            kwargs["temperature"] = self.temperature
+            # SDK 1.x dropped the named sampling arguments; the API still accepts them on Haiku 4.5 and older models.
+            kwargs["extra_body"] = {"temperature": self.temperature}
 
         start = time.perf_counter()
         resp = client.messages.create(**kwargs)

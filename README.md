@@ -16,7 +16,7 @@ admins edit prompt templates and lists failed responses.
 | Frontend | Plain JavaScript (ES modules, no build step), Cytoscape.js for the network, marked + DOMPurify for Markdown |
 | Backend  | Flask 3 + Flask-SQLAlchemy                                                                                  |
 | Database | MySQL 8 (developed on 8.4; uses JSON columns)                                                               |
-| LLM      | Primary: OpenAI (`OPENAI_MODEL`, default `gpt-6-luna`). Comparison: Claude Haiku 4.5                        |
+| LLM      | Primary: Claude Sonnet 4.6 (`ANTHROPIC_MODEL`, temperature 0.3). Comparison: OpenAI `gpt-6-luna`             |
 
 ## Quick start
 
@@ -365,6 +365,11 @@ cd backend && .venv/bin/flask --app run mlflow-eval --case mock_luad_kras_g12c
 
 ## Things to check and known limitations
 
+- **Models and temperature**: the primary model is Claude Sonnet 4.6 at temperature 0.3, so the evidence summaries
+  vary little between runs. It is the newest Claude that still accepts a temperature (Claude 4.7+ and 5.x reject one).
+  `gpt-6-luna` is a reasoning model and rejects any temperature, so `OPENAI_TEMPERATURE` stays empty. Swap the two
+  with `PRIMARY_PROVIDER` / `COMPARISON_PROVIDER`. The anthropic SDK 1.x has no `temperature` argument, so the client
+  sends it in the request body (`extra_body`).
 - **OpenAI model ID**: `.env` defaults to `gpt-6-luna`. Confirm the exact model ID for "GPT-6 Luna" in your OpenAI
   dashboard. Calls go through the Responses API. If it is a reasoning model, `LLM_MAX_TOKENS` also covers reasoning
   tokens, and a budget that is too small returns an empty answer (recorded as failed).

@@ -39,16 +39,21 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True, "pool_recycle": 280}
 
-    # LLM providers. "primary" answers every query; "comparison" runs when the user asks for it.
-    PRIMARY_PROVIDER = "openai"
-    COMPARISON_PROVIDER = "anthropic"
+    # LLM providers. "primary" answers every query (and runs the Workflow 4 agents); "comparison" runs when the user
+    # asks for it.
+    PRIMARY_PROVIDER = os.getenv("PRIMARY_PROVIDER", "anthropic")
+    COMPARISON_PROVIDER = os.getenv("COMPARISON_PROVIDER", "openai")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-6-luna")
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-    ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+    # Claude Sonnet 4.6: the newest Claude line that still accepts a temperature (4.7+ / 5.x models reject one)
+    ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
     LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4000"))
     LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "90"))
-    LLM_TEMPERATURE = _float_or_none(os.getenv("LLM_TEMPERATURE"))
+    # Per provider: empty = the model's default. 0.3 keeps Claude's evidence summaries consistent between runs;
+    # gpt-6-luna is a reasoning model and rejects any temperature.
+    ANTHROPIC_TEMPERATURE = _float_or_none(os.getenv("ANTHROPIC_TEMPERATURE", "0.3"))
+    OPENAI_TEMPERATURE = _float_or_none(os.getenv("OPENAI_TEMPERATURE"))
 
     # Biomedical sources
     DGIDB_URL = os.getenv("DGIDB_URL", "https://dgidb.org/api/graphql")
@@ -146,5 +151,6 @@ class TestConfig(Config):
     PBS_MIN_INTERVAL = 0
     ONCOKB_API_TOKEN = ""  # no live OncoKB calls from tests, even with a token in .env
     HTTP_CACHE = "off"  # tests never read or write the response store
+    PRIMARY_PROVIDER, COMPARISON_PROVIDER = "openai", "anthropic"  # fixed, whatever .env says
     VCF_LITERATURE_RANKER = "keyword"  # tests never load MedCPT
     MLFLOW_TRACKING_URI = ""  # tests that need MLflow turn it on themselves

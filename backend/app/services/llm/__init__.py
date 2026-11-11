@@ -17,7 +17,7 @@ def get_llm_client(provider) -> LLMClient:
         model=cfg[f"{key}_MODEL"],
         max_tokens=cfg["LLM_MAX_TOKENS"],
         timeout=cfg["LLM_TIMEOUT"],
-        temperature=cfg["LLM_TEMPERATURE"],
+        temperature=cfg[f"{key}_TEMPERATURE"],
     )
 
 
