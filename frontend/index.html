@@ -111,6 +111,9 @@
             <div id="relation-types" class="chips"></div>
           </fieldset>
 
+          <label class="meds-field small">Current medications <span class="muted">(optional, comma-separated: checked for drug–drug interactions)</span>
+            <input id="medications" type="text" autocomplete="off" placeholder="e.g. omeprazole, fluoxetine"></label>
+
           <div class="options small">
             <label class="chip"><input id="compare" type="checkbox"> <span id="compare-label" class="compare-label">Generate comparison report</span></label>
           </div>
@@ -146,6 +149,8 @@
                 term. Lung cancer only in this prototype.</span>
             </fieldset>
           </div>
+          <label class="meds-field small">Patient's current medications <span class="muted">(optional, comma-separated: checked against every candidate drug)</span>
+            <input id="vcf-medications" type="text" autocomplete="off" placeholder="e.g. carbamazepine, omeprazole"></label>
           <div class="options small">
             <label class="chip"><input id="vcf-compare" type="checkbox"> <span class="compare-label">Generate comparison report</span></label>
             <button id="vcf-submit" type="submit">Predict candidate drugs</button>
@@ -173,6 +178,7 @@
       <a href="#sec-profile">Profile</a>
       <a href="#sec-interactions">Drug–gene interactions <span class="count" data-count="interactions"></span></a>
       <a href="#sec-pgx">Pharmacogenomics <span class="count" data-count="pgx"></span></a>
+      <a href="#sec-safety">Drug safety <span class="count" data-count="safety"></span></a>
       <a href="#sec-literature">Literature <span class="count" data-count="literature"></span></a>
       <a href="#sec-pbs">Australian availability <span class="count" data-count="pbs"></span></a>
     </nav>
@@ -252,6 +258,11 @@
     </section>
 
     <!-- Australian context: PBS listing (not DGI evidence) -->
+    <section id="sec-safety" class="card section">
+      <div class="section-head"><h2>Drug safety: interactions and warnings</h2></div>
+      <div id="safety"></div>
+    </section>
+
     <section id="sec-pbs" class="card section">
       <div class="section-head"><h2>Australian availability (PBS)</h2></div>
       <div id="availability"></div>
@@ -268,6 +279,7 @@
       <a href="#vcf-sec-established">A. Established <span class="count" id="vcf-count-established"></span></a>
       <a href="#vcf-sec-exploratory">B. Exploratory <span class="count" id="vcf-count-exploratory"></span></a>
       <a href="#vcf-sec-comutations">Co-mutations</a>
+      <a href="#vcf-sec-safety">Drug safety <span class="count" id="vcf-count-safety"></span></a>
       <a href="#vcf-sec-network">Variant–drug network</a>
       <a href="#vcf-sec-appendix">Appendix</a>
       <a href="#vcf-sec-limits">Limitations</a>
@@ -310,6 +322,12 @@
     <section id="vcf-sec-comutations" class="card section">
       <div class="section-head"><h2>Co-mutations without a targeted drug</h2></div>
       <div id="vcf-comutations"></div>
+    </section>
+
+    <section id="vcf-sec-safety" class="card section">
+      <div class="section-head"><h2>Drug safety: interactions and warnings</h2>
+        <span class="muted small">Flagged, not scored: change the co-medication or adjust the dose; withdrawn drugs are down-ranked</span></div>
+      <div id="vcf-safety"></div>
     </section>
 
     <section id="vcf-sec-network" class="card section">

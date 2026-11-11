@@ -64,6 +64,8 @@ Group by relationship type (inhibition, induction, binding, metabolism…), stro
 ## Pharmacogenomic (SNP-specific) findings
 {% endif %}
 ## Clinical significance
+If drug–drug interactions with the user's current medications or drug warnings are listed, report them here with
+their severity and evidence IDs; never add interactions that are not listed.
 ## Evidence strength and limitations"""
 
 WORKFLOW_LABEL = "Gene or drug → drug–gene interaction list"
@@ -130,6 +132,10 @@ In the given order: variant -> drug, evidence level, score, and why. Mention dow
 The top exploratory drugs and the Tier 3 variants, each clearly labelled as a prediction (not evidence of response).
 ## Resistance and co-occurring variants
 ## Co-mutations without a targeted drug
+## Safety: drug interactions and warnings
+Only if any are listed with the drugs above: each drug–drug interaction (with a current medication or inside a
+combination regimen) and each ChEMBL warning, with its severity and evidence ID. Do not add interactions that are
+not listed; if none are listed, write one sentence saying none were found by the checks.
 ## Limitations
 End with: "Research and teaching use only; not clinical advice." """
 
@@ -233,6 +239,14 @@ def format_evidence_item(item):
                 f"{item['significance']} ({item['direction']}) | level {item['level']} | disease: {item['disease']} "
                 f"({item['disease_match_label']}) | match: {item['specificity']} | "
                 f"statement: {(item.get('statement') or 'n/a')[:500]} | PMID: {item.get('pmid') or 'n/a'}")
+    if kind == "fda_cyp":
+        notes = f" | FDA note: {item['notes'][:300]}" if item.get("notes") else ""
+        return (f"[{item['id']}] FDA drug-interaction table | {item['drug']} – {item['gene']} | {item['label']} "
+                f"(clinical classification by effect on exposure){notes}")
+    if kind == "ddi":
+        label = f" | label ({item.get('label_title')}): \"{item['label_text']}\"" if item.get("label_text") else ""
+        return (f"[{item['id']}] Drug–drug interaction check ({item['source']}) | {item['drug']} with {item['other']} "
+                f"({item['context']}) | severity: {item['severity']} | {item['summary']}{label}")
     if kind == "oncokb":
         return (f"[{item['id']}] OncoKB | {item['gene']} {item['protein_change']} | {item['drug']} | "
                 f"{item['significance']} | {item['level']} | cancer type: {item.get('cancer_type') or 'n/a'}")
@@ -270,6 +284,11 @@ def format_variant(item):
 def format_pair(row, shown):
     """shown: the evidence IDs in the prompt. Only those are listed, so the LLM never cites an item it can't see."""
     conflicts = f" | CONFLICT: {'; '.join(row['conflicts'])}" if row.get("conflicts") else ""
+    if row.get("warnings"):
+        conflicts += f" | DRUG WARNING (ChEMBL): {'; '.join(row['warnings'])}"
+    if row.get("interactions"):
+        conflicts += " | INTERACTION WITH CURRENT MEDICATION: " + "; ".join(
+            f"{a['other']} ({a['severity']}) [{a['evidence_id']}]" for a in row["interactions"] if a["evidence_id"] in shown)
     evidence_ids = [eid for eid in row["evidence_ids"] if eid in shown]
     return (f"- {row['gene']} – {row['drug']} | "
             f"grade: {row['grade_label']} ({row['grade_reason']}) | relationship: {', '.join(row['categories'])} | "
@@ -285,8 +304,8 @@ def select_prompt_evidence(items, limit):
     by_kind = {}
     for item in items:
         by_kind.setdefault(item["kind"], []).append(item)
-    quotas = {"profile": 0.03, "interaction": 0.35, "mechanism": 0.15, "guideline": 0.15,
-              "variant_annotation": 0.15, "publication": 0.1, "drug_info": 0.05}
+    quotas = {"profile": 0.03, "ddi": 0.1, "interaction": 0.3, "mechanism": 0.12, "guideline": 0.12,
+              "fda_cyp": 0.08, "variant_annotation": 0.12, "publication": 0.08, "drug_info": 0.05}
     chosen = []
     for kind, share in quotas.items():
         chosen += by_kind.get(kind, [])[: max(1, int(limit * share))]
@@ -299,6 +318,7 @@ def select_vcf_evidence(evidence, limit):
     """The tiered variants, then the evidence behind the established track, then the top exploratory drugs."""
     items = {i["id"]: i for i in evidence.get("items", [])}
     chosen = [i["id"] for i in items.values() if i["kind"] == "variant"]
+    chosen += [i["id"] for i in items.values() if i["kind"] == "ddi"][:15]
     tracks = evidence.get("tracks") or {}
     for c in tracks.get("established", []):
         chosen += c["evidence_ids"][:6]
@@ -320,6 +340,13 @@ def format_candidate(c, shown):
         extras.append(f"conflicts: {'; '.join(c['conflicts'])}")
     if c.get("mechanism"):
         extras.append(f"mechanism (ChEMBL): {c['mechanism']}")
+    safety = c.get("safety") or {}
+    if safety.get("warnings"):
+        extras.append(f"DRUG WARNING (ChEMBL): {'; '.join(safety['warnings'])}")
+    for a in safety.get("interactions") or []:
+        if a["evidence_id"] in shown:
+            extras.append(f"INTERACTION ({a['context']}, {a['severity']}): {a['drug']} with {a['other']}, "
+                          f"{a['mechanism']} [{a['evidence_id']}]")
     return (f"#{c['rank']} {c['drug']} | score {c['score']} | {c['track_reason']} | variants: "
             f"{', '.join(c['variants']) or 'n/a'} | approved drug: {'yes' if c.get('approved') else 'no / unknown'}"
             + "".join(f" | {e}" for e in extras) + f" | evidence: {', '.join(ids[:8]) or 'n/a'}")

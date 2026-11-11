@@ -29,6 +29,9 @@ from .pharmgkb import PharmGKBClient
 from .pubtator import PubTatorClient
 from .uniprot import UniProtClient
 
+from ..relations import matches
+from .. import safety  # module import: safety imports this package too
+
 logger = logging.getLogger(__name__)
 
 NOT_IMPORTED = "not imported yet; run: flask --app run import-data"
@@ -60,9 +63,10 @@ def _local(status, releases, name, fn):
     return _safe(status, name, fn, version=release.version)
 
 
-def collect_evidence(name, relation_types, resolved=None, entity_type="gene"):
+def collect_evidence(name, relation_types, resolved=None, entity_type="gene", medications=()):
     """name: what the user typed; entity_type: "gene" (gene -> drugs) or "drug" (drug -> genes).
-    resolved: its stage 1 entry (explorer.py has already checked it)."""
+    resolved: its stage 1 entry (explorer.py has already checked it). medications: the patient's current
+    medications (names), checked for drug–drug interactions with the drugs found (services/safety.py)."""
     cfg = current_app.config
     timeout = cfg["HTTP_TIMEOUT"]
     status = {}
@@ -92,6 +96,15 @@ def collect_evidence(name, relation_types, resolved=None, entity_type="gene"):
     mechanisms = _filter(mechanisms, "action_type", relation_types)
     if status["chembl"]["state"] == "ok":
         status["chembl"]["count"] = len(mechanisms)
+
+    # Stage 3b': FDA CYP / transporter roles (local): for a CYP or transporter gene, its clinical inhibitors,
+    # inducers and sensitive substrates (CYP2D6 -> paroxetine, strong inhibitor); for a drug, the pathways it affects.
+    cyp_roles = _local(status, releases, "fda_ddi", lambda: (
+        lookup.cyp_roles_for_drug(drug_ids[0] if drug_ids else None, symbol) if is_drug
+        else lookup.cyp_roles_for_genes(genes)))
+    cyp_roles = [r for r in cyp_roles if r["gene"] and matches(_role_categories(r), relation_types)]
+    if status["fda_ddi"]["state"] == "ok":
+        status["fda_ddi"]["count"] = len(cyp_roles)
 
     # Stage 3c: SNP-specific response, CPIC guidelines (local) and PharmGKB/ClinPGx clinical annotations (live).
     guidelines, variants = [], []
@@ -135,13 +148,18 @@ def collect_evidence(name, relation_types, resolved=None, entity_type="gene"):
                else build_gene_profile(entry, UniProtClient(cfg["UNIPROT_URL"], timeout), status))
 
     items = build_evidence_items(interactions, variants, drug_info, publications, mechanisms, guidelines,
-                                 releases, profiles=[profile])
+                                 releases, profiles=[profile], cyp_roles=cyp_roles)
 
     # Stage 4: merge per pair, grade, flag conflicts, decide "interactions found?".
     with tracking.span("evidence_integration") as s:
         table = consolidate_pairs(items)
         outcome = decide_outcome(items, status)
         tracking.set_outputs(s, {"pairs": len(table), "outcome": outcome["status"]})
+
+    # Safety: ChEMBL warnings on every drug listed, and drug–drug interactions with the current medications.
+    with tracking.span("safety", inputs={"medications": list(medications)}) as s:
+        safety_block = safety.check_table(table, entry if is_drug else None, list(medications), items, status)
+        tracking.set_outputs(s, {"interactions": len(safety_block["interactions"])})
 
     return {
         "outcome": outcome,
@@ -151,6 +169,7 @@ def collect_evidence(name, relation_types, resolved=None, entity_type="gene"):
         "table": table,
         "network": build_network(items, [symbol]),
         "australian_availability": availability,
+        "safety": safety_block,
         "source_status": status,
         "counts": {
             "interactions": len(interactions),
@@ -159,6 +178,7 @@ def collect_evidence(name, relation_types, resolved=None, entity_type="gene"):
             "variant_annotations": len(variants),
             "publications": len(publications),
             "drug_info": len(drug_info),
+            "fda_cyp_roles": len(cyp_roles),
             "pairs": len(table),
         },
     }
@@ -244,7 +264,7 @@ def _pbs_candidates(guidelines, mechanisms, interactions, limit):
 
 
 def build_evidence_items(interactions, variants, drug_info, publications, mechanisms=(), guidelines=(),
-                         releases=None, profiles=()):
+                         releases=None, profiles=(), cyp_roles=()):
     releases = releases or {}
     items = []
 
@@ -274,6 +294,11 @@ def build_evidence_items(interactions, variants, drug_info, publications, mechan
         add({"kind": "mechanism", "source": "ChEMBL", "release": release("chembl"), **m})
     for g in guidelines:
         add({"kind": "guideline", "source": "CPIC", "categories": ["snp"], "release": release("cpic"), **g})
+    for r in cyp_roles:
+        add({"kind": "fda_cyp", "source": "FDA DDI table", "release": release("fda_ddi"), "gene": r["gene"],
+             "drug": r["drug"], "chembl_id": r["chembl_id"], "pathway": r["pathway"], "system": r["system"],
+             "role": r["role"], "strength": r["strength"], "notes": r["notes"], "categories": _role_categories(r),
+             "label": _role_label(r), "pmids": [], "url": safety.FDA_TABLE})
     for v in variants:
         add({"kind": "variant_annotation", "source": "PharmGKB", "categories": ["snp"], **v})
     for d in drug_info:
@@ -319,6 +344,8 @@ def build_network(items, query_entities):
             gene_drug(item["gene"], item["drug"], item["categories"][0], item["id"], item["action_type"])
         elif kind == "guideline":
             gene_drug(item["gene"], item["drug"], "snp", item["id"], f"CPIC {item['cpic_level']}")
+        elif kind == "fda_cyp":
+            gene_drug(item["gene"], item["drug"], item["categories"][0], item["id"], f"{item['label']} (FDA)")
         elif kind == "variant_annotation" and item.get("variant"):
             var_id = f"variant:{item['variant']}"
             node(var_id, item["variant"], "variant")
@@ -329,3 +356,17 @@ def build_network(items, query_entities):
                 node(f"drug:{drug.upper()}", drug.upper(), "drug")
                 edge(var_id, f"drug:{drug.upper()}", "snp", item["id"], item.get("level") or "")
     return {"nodes": list(nodes.values()), "edges": list(edges.values())}
+
+
+def _role_categories(role):
+    """FDA role -> relation category: inhibitor -> inhibit, inducer -> induce, CYP substrate -> metabolize."""
+    if role["role"] == "inhibitor":
+        return ["inhibit"]
+    if role["role"] == "inducer":
+        return ["induce"]
+    return ["metabolize"] if role["system"] == "CYP" else ["other"]
+
+
+def _role_label(role):
+    """'strong CYP2D6 inhibitor', 'sensitive CYP3A substrate', 'P-gp inhibitor'."""
+    return " ".join(filter(None, [role.get("strength"), role["pathway"], role["role"]]))

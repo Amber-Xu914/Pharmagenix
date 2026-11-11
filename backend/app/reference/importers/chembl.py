@@ -1,14 +1,15 @@
-"""ChEMBL curated drug mechanisms, their human gene targets, and drug synonyms (CC BY-SA 3.0).
+"""ChEMBL curated drug mechanisms, their human gene targets, drug synonyms and drug warnings (CC BY-SA 3.0).
 
 Only the mechanism-of-action table (~7,500 records) is imported, not the full 35 GB database:
-it carries the action types (inhibitor, agonist, ...) that most DGIdb interactions lack.
+it carries the action types (inhibitor, agonist, ...) that most DGIdb interactions lack. The drug warnings
+(withdrawals and boxed warnings, with their toxicity class) let the results flag a drug before it is recommended.
 """
 
 from concurrent.futures import ThreadPoolExecutor
 
 from flask import current_app
 
-from ..models import Drug, DrugMechanism, DrugSynonym
+from ..models import Drug, DrugMechanism, DrugSynonym, DrugWarning
 from ..text import norm
 from . import gene_symbol_index, http_session, replace_tables
 
@@ -36,12 +37,16 @@ def run(echo):
     drugs, synonyms = build_drugs(molecules, set(molecule_ids))
     drug_names = {d["chembl_id"]: d["pref_name"] for d in drugs}
     rows, skipped = build_mechanisms(mechanisms, targets, drug_names, gene_symbol_index())
-    echo(f"[chembl] writing {len(drugs)} drugs, {len(synonyms)} synonyms, {len(rows)} mechanism rows")
-    replace_tables([(Drug, drugs), (DrugSynonym, synonyms), (DrugMechanism, rows)])
+    echo("[chembl] downloading drug warnings (withdrawals, boxed warnings)")
+    warnings = build_warnings(_paginate(session, f"{base}/drug_warning.json", "drug_warnings"), set(drug_names))
+    echo(f"[chembl] writing {len(drugs)} drugs, {len(synonyms)} synonyms, {len(rows)} mechanism rows, "
+         f"{len(warnings)} warnings")
+    replace_tables([(Drug, drugs), (DrugSynonym, synonyms), (DrugMechanism, rows), (DrugWarning, warnings)])
     return {
         "version": version,
         "url": base,
-        "counts": {"drugs": len(drugs), "drug_synonyms": len(synonyms), "drug_mechanisms": len(rows)},
+        "counts": {"drugs": len(drugs), "drug_synonyms": len(synonyms), "drug_mechanisms": len(rows),
+                   "drug_warnings": len(warnings)},
         "notes": f"{skipped} mechanisms skipped (non-human or no gene-level target)",
     }
 
@@ -176,3 +181,27 @@ def build_mechanisms(mechanisms, targets, drug_names, gene_index):
                 "ref_urls": urls[:5],
             }
     return list(rows.values()), skipped
+
+
+def build_warnings(records, drug_ids):
+    """ChEMBL drug_warning records for the imported drugs, attached to the parent molecule."""
+    out, seen = [], set()
+    for w in records:
+        chembl_id = w.get("parent_molecule_chembl_id") or w.get("molecule_chembl_id")
+        kind = (w.get("warning_type") or "").strip()
+        if chembl_id not in drug_ids or not kind or w.get("warning_id") in seen:
+            continue
+        seen.add(w.get("warning_id"))
+        year = w.get("warning_year")
+        out.append({
+            "warning_id": int(w["warning_id"]),
+            "chembl_id": chembl_id,
+            "warning_type": kind[:32],
+            "warning_class": (w.get("warning_class") or "")[:128] or None,
+            "description": w.get("warning_description") or None,
+            "country": (w.get("warning_country") or "")[:500] or None,
+            "year": int(year) if str(year or "").isdigit() else None,
+            "refs": [{"type": r.get("ref_type"), "id": r.get("ref_id"), "url": r.get("ref_url")}
+                     for r in w.get("warning_refs") or []][:5],
+        })
+    return out

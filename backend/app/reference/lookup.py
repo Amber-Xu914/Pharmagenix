@@ -3,7 +3,10 @@
 import re
 
 from ..extensions import db
-from .models import CpicPair, CpicRecommendation, Drug, DrugMechanism, Gene, PbsItem, PbsItemRestriction, PbsRestriction, SourceRelease
+from .models import (
+    CpicPair, CpicRecommendation, Drug, DrugCypRole, DrugMechanism, DrugSynonym, DrugWarning, Gene, PbsItem,
+    PbsItemRestriction, PbsRestriction, SourceRelease,
+)
 from .text import norm, strip_salt
 
 CLASSIFICATION_ORDER = {"Strong": 0, "Moderate": 1, "Optional": 2}
@@ -195,3 +198,82 @@ def pbs_restrictions(pbs_codes):
         if link.pbs_code not in entry["pbs_codes"]:
             entry["pbs_codes"].append(link.pbs_code)
     return list(out.values())
+
+
+# ---------- Drug safety (services/safety.py) ----------
+
+OFFICIAL_NAMES = ("PREF_NAME", "INN", "USAN", "BAN", "USP", "JAN")
+
+
+def drug_warnings(chembl_ids):
+    """{chembl_id: [warning]} from ChEMBL: withdrawals first, then boxed warnings."""
+    ids = [i for i in dict.fromkeys(chembl_ids) if i]
+    if not ids:
+        return {}
+    rows = db.session.scalars(db.select(DrugWarning).where(DrugWarning.chembl_id.in_(ids))).all()
+    out = {}
+    for w in sorted(rows, key=lambda w: (w.warning_type != "Withdrawn", w.year or 0)):
+        out.setdefault(w.chembl_id, []).append({
+            "type": w.warning_type, "class": w.warning_class, "description": w.description, "country": w.country,
+            "year": w.year, "refs": w.refs or [],
+            "url": f"https://www.ebi.ac.uk/chembl/web_components/explore/compound/{w.chembl_id}"})
+    return out
+
+
+def cyp_roles(chembl_id=None, name=None):
+    """The drug's FDA CYP / transporter roles, matched by ChEMBL ID or by (salt-stripped) name."""
+    conditions = []
+    if chembl_id:
+        conditions.append(DrugCypRole.chembl_id == chembl_id)
+    if name:
+        conditions += [DrugCypRole.drug_name_norm == norm(name), DrugCypRole.drug_name_norm == strip_salt(name)]
+    if not conditions:
+        return []
+    rows = db.session.scalars(db.select(DrugCypRole).where(db.or_(*conditions))).all()
+    return [{"drug": r.drug_name, "system": r.system, "pathway": r.pathway, "gene": r.gene_symbol, "role": r.role,
+             "strength": r.strength, "notes": r.notes} for r in rows]
+
+
+def cyp_roles_for_genes(genes):
+    """FDA rows naming these genes (e.g. CYP2D6 -> paroxetine, strong inhibitor), for the gene -> drugs search."""
+    if not genes:
+        return []
+    rows = db.session.scalars(db.select(DrugCypRole).where(DrugCypRole.gene_symbol.in_(genes))).all()
+    return [_role_record(r) for r in rows]
+
+
+def cyp_roles_for_drug(chembl_id, name):
+    conditions = [DrugCypRole.drug_name_norm.in_({norm(name), strip_salt(name)})] if name else []
+    if chembl_id:
+        conditions.append(DrugCypRole.chembl_id == chembl_id)
+    if not conditions:
+        return []
+    return [_role_record(r) for r in db.session.scalars(db.select(DrugCypRole).where(db.or_(*conditions))).all()]
+
+
+def _role_record(r):
+    return {"drug": r.drug_name.upper(), "chembl_id": r.chembl_id, "gene": r.gene_symbol, "hgnc_id": r.hgnc_id,
+            "pathway": r.pathway, "system": r.system, "role": r.role, "strength": r.strength, "notes": r.notes}
+
+
+def official_names(chembl_id):
+    """The drug's official names (preferred name, INN, USAN, ...), for finding it named in another drug's label."""
+    if not chembl_id:
+        return []
+    rows = db.session.scalars(db.select(DrugSynonym.synonym).where(
+        DrugSynonym.chembl_id == chembl_id, DrugSynonym.syn_type.in_(OFFICIAL_NAMES))).all()
+    return list(dict.fromkeys(rows))
+
+
+def cpic_genes(chembl_id, name):
+    """{gene: CPIC level} for the drug's CPIC gene–drug pairs."""
+    conditions = [CpicPair.drug_name_norm == norm(name)] if name else []
+    if chembl_id:
+        conditions.append(CpicPair.chembl_id == chembl_id)
+    if not conditions:
+        return {}
+    out = {}
+    for p in db.session.scalars(db.select(CpicPair).where(db.or_(*conditions))).all():
+        if p.cpic_level and CPIC_LEVEL_ORDER.get(p.cpic_level, 9) < CPIC_LEVEL_ORDER.get(out.get(p.gene_symbol), 9):
+            out[p.gene_symbol] = p.cpic_level
+    return out

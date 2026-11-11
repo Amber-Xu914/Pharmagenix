@@ -36,6 +36,21 @@ def app():
         db.drop_all()
 
 
+@pytest.fixture(autouse=True)
+def fake_labels(monkeypatch):
+    """No test reaches openFDA: drug labels come from this dict (lower-case generic name -> DRUG INTERACTIONS text);
+    a test adds the labels it needs."""
+    labels = {}
+
+    def label(self, drug_name):
+        text = labels.get(drug_name.lower())
+        return text and {"drug": drug_name, "title": drug_name.lower(), "set_id": "test", "effective_time": "20260101",
+                         "url": "https://dailymed.example/test", "text": text}
+
+    monkeypatch.setattr("app.services.biomed.openfda.OpenFDAClient.label", label)
+    return labels
+
+
 @pytest.fixture
 def client(app):
     return app.test_client()
@@ -56,7 +71,7 @@ def fake_sources(monkeypatch):
                "anthropic": "Summary citing [E1, E2]."}
     calls = {"collect": 0}
 
-    def fake_collect(gene, relation_types, resolved=None, entity_type="gene"):
+    def fake_collect(gene, relation_types, resolved=None, entity_type="gene", medications=()):
         calls["collect"] += 1
         items = [dict(i) for i in FAKE_EVIDENCE_ITEMS]
         return {"items": items, "table": consolidate_pairs(items), "network": build_network(items, [gene]),

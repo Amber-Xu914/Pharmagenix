@@ -43,6 +43,8 @@ GENE_SOURCES = [
     ("pubtator", "PubTator3", "Literature for the strongest pairs"),
     ("uniprot", "UniProt", "Protein function"),
     ("drugbank", "DrugBank", "Drug descriptions"),
+    ("fda_ddi", "FDA drug-interaction table", "CYP / transporter inhibitors, inducers and substrates"),
+    ("openfda", "openFDA drug labels", "Drug interactions sections, for the current medications"),
     ("pbs", "PBS Schedule", "Australian subsidy listing"),
 ]
 VCF_SOURCES = [
@@ -53,6 +55,7 @@ VCF_SOURCES = [
     ("chembl", "ChEMBL", "Drug mechanisms of action (gene level)"),
     ("pubtator", "PubTator3", "Literature for the exploratory track"),
     ("medcpt", "MedCPT", "Re-ranking of the retrieved literature"),
+    ("openfda", "openFDA drug labels", "Drug interactions sections, for interaction checks"),
     ("pbs", "PBS Schedule", "Australian subsidy listing"),
 ]
 SOURCE_NAMES = {key: name for key, name, _ in GENE_SOURCES + VCF_SOURCES}
@@ -319,6 +322,14 @@ def reference_text(item):
         return (f"CIViC evidence item EID{g('evidence_id')}: {g('molecular_profile')} and "
                 f"{', '.join(g('therapies') or []) or 'no therapy'}; {(g('significance') or '').lower()}, level "
                 f"{g('level')}, {g('disease')}. Primary source: {g('citation') or 'not given'}{pmid}.")
+    if k == "fda_cyp":
+        return (f"US Food and Drug Administration. Drug development and drug interactions: {_name(g('drug'))} as a "
+                f"{g('label')}. {g('release') or 'FDA table of substrates, inhibitors and inducers'}.")
+    if k == "ddi":
+        label = f" {g('label_title')} prescribing information ({g('label_date') or 'n.d.'}), drug interactions." \
+            if g("label_title") else ""
+        return (f"Drug–drug interaction check ({g('rule')}): {g('drug')} with {g('other')}, {g('severity')}."
+                f"{label} Source: {g('source')}.")
     if k == "oncokb":
         drugs = ", ".join(g("drugs") or g("therapies") or [])
         return f"OncoKB: {g('gene') or ''} {g('alteration') or ''} and {drugs}; level {g('level')}. OncoKB.".replace("  ", " ")
@@ -550,10 +561,11 @@ def build_dgi(b):
     n = b.table("Evidence grades, assigned by fixed rules to each drug–gene pair (the strongest evidence decides).",
                 ["Grade", "Criteria"], [
                     ["Strong", "CPIC level A or B guideline, or PharmGKB clinical annotation level 1A/1B"],
-                    ["Moderate", "PharmGKB level 2A/2B; curated ChEMBL mechanism of action; or ≥3 DGIdb sources with "
-                                 "literature"],
-                    ["Supportive", "Lower-level pharmacogenomic evidence (CPIC C/D, PharmGKB 3), or ≥2 DGIdb sources or "
-                                   "literature"],
+                    ["Moderate", "PharmGKB level 2A/2B; curated ChEMBL mechanism of action; FDA clinical "
+                                 "classification as a strong / moderate CYP inhibitor or inducer or a sensitive substrate; "
+                                 "or ≥3 DGIdb sources with literature"],
+                    ["Supportive", "Lower-level pharmacogenomic evidence (CPIC C/D, PharmGKB 3), a weak or transporter "
+                                   "role in the FDA table, or ≥2 DGIdb sources or literature"],
                     ["Limited", "A single database record without literature"]], [1.6, 7.8])
     b.p(f"Records describing the same pair were merged and graded as in Table {n}. Opposite directions of action for "
         f"the same pair are flagged as conflicts. Grades are not assigned or altered by the language model.")
@@ -620,6 +632,8 @@ def build_dgi(b):
                     note="Matched by generic name on the current PBS Schedule; whether a patient meets a restriction "
                          "was not assessed.")
         b.p(f"{sum(1 for a in pbs if a.get('pbs_listed'))} of {len(pbs)} drugs checked are PBS-listed (Table {n}).")
+
+    safety_section(b, "3.5" if pbs else "3.4", warned=_dgi_warned(q, table_rows, ev))
 
     b.h1("4\tDiscussion")
     b.discussion(["primary"], "The following interpretation was written by {models} from the evidence in Section 3 and "
@@ -856,6 +870,10 @@ def build_vcf(b):
          else "Every tiered variant has variant-level drug evidence. ")
         + (f"Known co-mutation patterns present: {'; '.join(patterns)}." if patterns else ""))
 
+    candidates = established + exploratory
+    safety_section(b, "3.6", warned=[(c["drug"], c["safety"]["warnings"]) for c in candidates
+                                     if (c.get("safety") or {}).get("warnings")], regimens=True)
+
     b.h1("4\tDiscussion")
     b.discussion(["primary", "literature", "biology", "hypothesis"],
                  "Section 4 was written by language-model agents ({models}) from the results above and is reproduced "
@@ -888,6 +906,57 @@ def build_vcf(b):
         *([["Follow-up question", q["followup_question"]]] if q.get("followup_question") else []),
     ])
     return (f"{sample}: precision oncology research report", f"{genes[0] if genes else 'VCF'}_{code}")
+
+
+# ---------- Drug safety (both workflows) ----------
+
+def _dgi_warned(q, rows, ev):
+    out, seen = [], set()
+    drug_warnings = (ev.get("safety") or {}).get("drug_warnings") or []
+    if drug_warnings:
+        out.append((q["entities"][0], drug_warnings))
+    for r in rows:
+        if r.get("warnings") and r["drug"] not in seen:
+            seen.add(r["drug"])
+            out.append((_name(r["drug"]), r["warnings"]))
+    return out
+
+
+def safety_section(b, number, warned, regimens=False):
+    """Interactions with the current medications (and inside regimens) and ChEMBL warnings, as checked by
+    services/safety.py; omitted for searches run before the checks existed."""
+    safety = b.ev.get("safety")
+    if safety is None:
+        return
+    b.h2(f"{number} Drug safety: interactions and warnings")
+    meds = [m["name"] for m in safety.get("medications") or []]
+    alerts = safety.get("interactions") or []
+    n = safety.get("checked_drugs", 0)
+    checked = (f"{_name(b.q['entities'][0])} was" if b.q.get("entity_type") == "drug"
+               else f"The {n} best-supported drug{'s were' if n != 1 else ' was'}")
+    scope = (f"{checked} checked against the current medications ({_and(meds)})" if meds
+             else "No current medications were given")
+    scope += "; each combination regimen was checked internally." if regimens else "."
+    b.p(scope + " Rules: the FDA label of each drug (openFDA), the FDA table of CYP / transporter inhibitors, inducers "
+        "and substrates, and phenoconversion of a pharmacogene with a CPIC guideline (drug–drug–gene).")
+    if alerts:
+        n = b.table("Drug–drug interactions found by the checks, most severe first.",
+                    ["Severity", "Drugs", "Context", "Finding", "Ref"],
+                    [[a["severity"].capitalize(), f"{a['drug']} with {a['other']}", a["context"],
+                      a["summary"] + (f" Label: “{a['label_text']}”" if a.get("label_text") else ""),
+                      b.refs.cell([a.get("evidence_id")])] for a in alerts[:30]],
+                    [1.0, 2.0, 1.4, 4.4, 0.7],
+                    note="Major: the label says to avoid the combination, a strong inhibitor or inducer meets a sensitive "
+                         "substrate, or a strong inhibitor changes a pharmacogene's phenotype. Pharmacokinetic "
+                         "interactions only; interactions are flagged, not scored.")
+        b.p(f"{len(alerts)} interaction{'s were' if len(alerts) != 1 else ' was'} found (Table {n}).")
+    elif meds or regimens:
+        b.p("No pharmacokinetic interaction was found by the checks.")
+    if warned:
+        n = b.table("Drug warnings recorded in ChEMBL (withdrawals and boxed warnings).", ["Drug", "Warning"],
+                    [[drug, "; ".join(w)] for drug, w in warned[:30]], [2.4, 7.0])
+        b.p(f"{len(warned)} drug{'s carry' if len(warned) != 1 else ' carries'} a ChEMBL warning (Table {n}); withdrawn "
+            f"drugs are down-ranked.")
 
 
 # ---------- Packaging ----------

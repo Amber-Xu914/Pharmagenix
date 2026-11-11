@@ -62,7 +62,7 @@ def load_example(example_id):
     return variants, info, example
 
 
-def run_vcf_exploration(variants, info, cancer_type, compare=False):
+def run_vcf_exploration(variants, info, cancer_type, compare=False, medications=()):
     """With MLflow tracking on, the search is one run and one trace (see tracking.py)."""
     cancer = resolve_cancer_type(cancer_type)
     label = info.get("example") or info.get("filename") or info.get("tumour_sample") or "uploaded sample"
@@ -73,7 +73,8 @@ def run_vcf_exploration(variants, info, cancer_type, compare=False):
         db.session.add(query)
         db.session.commit()  # persist early so even a crash is visible in the admin panel
         try:
-            query.evidence = {**run_pipeline(variants, info, cancer), "cached_sources": replayed_hosts()}
+            query.evidence = {**run_pipeline(variants, info, cancer, medications),
+                              "cached_sources": replayed_hosts()}
             record_interactions(query)
             db.session.commit()
             if query.evidence["outcome"]["status"] == "found":  # nothing tiered: no LLM, no drug claims

@@ -43,6 +43,7 @@ from .matching import SPECIFICITY, match_profile
 from .oncokb import ESTABLISHED as ONCOKB_ESTABLISHED, OncoKBClient
 from .parse import PROTEIN_ALTERING, TRUNCATING
 from .vep import VEPClient
+from .. import safety
 
 logger = logging.getLogger(__name__)
 
@@ -763,8 +764,9 @@ def _public_candidate(c):
     return out
 
 
-def run_pipeline(variants, info, cancer):
-    """variants: parsed records (parse.py); info: the parser's file info; cancer: the resolved cancer type."""
+def run_pipeline(variants, info, cancer, medications=()):
+    """variants: parsed records (parse.py); info: the parser's file info; cancer: the resolved cancer type;
+    medications: the patient's current medications (names), checked against the candidates in stage 7."""
     status, notes = {}, []
     releases = lookup.latest_releases()
     missing = [s for s in ("civic", "intogen", "hotspots", "cbioportal") if s not in releases]
@@ -789,6 +791,7 @@ def run_pipeline(variants, info, cancer):
         v["annotation_source"] = source
 
     items, tracks, resistance_only, availability = [], {"established": [], "exploratory": []}, [], None
+    safety_block = {"medications": [], "interactions": [], "checked_drugs": 0, "warned_drugs": 0}
     if tiered:
         genes = sorted({v["gene"] for v in tiered})
         with tracking.span("4_dgi_retrieval", inputs={"genes": genes}):
@@ -805,6 +808,11 @@ def run_pipeline(variants, info, cancer):
         with tracking.span("7_ranking") as s:
             tracks, resistance_only = rank(candidates, tiered, mechanisms, literature)
             tracking.set_outputs(s, {name: [(c["drug"], c["score"]) for c in rows[:10]] for name, rows in tracks.items()})
+        with tracking.span("7b_safety", inputs={"medications": list(medications)}) as s:
+            # ChEMBL warnings and drug–drug interactions (services/safety.py); re-ranks with the safety points
+            safety_block = safety.check_candidates(tracks, list(medications), items, status)
+            tracking.set_outputs(s, {"interactions": len(safety_block["interactions"]),
+                                     "warned_drugs": safety_block["warned_drugs"]})
         if "pbs" in releases:
             ranked = [c for c in tracks["established"] + tracks["exploratory"] if c["top"]]
             pbs = [(c["drug"].split(" + ")[0].upper(), c.get("chembl_id")) for c in ranked][: current_app.config["MAX_PBS_DRUGS"]]
@@ -812,7 +820,7 @@ def run_pipeline(variants, info, cancer):
         else:
             status["pbs"] = {"state": "disabled", "count": 0, "error": "not imported"}
     else:
-        for name in ("dgidb", "chembl", "pubtator"):
+        for name in ("dgidb", "chembl", "pubtator", "openfda"):
             status[name] = {"state": "skipped", "count": 0}
 
     variant_drugs = {v for rows in tracks.values() for c in rows if c["sensitivity"] or c["oncokb"]
@@ -842,7 +850,8 @@ def run_pipeline(variants, info, cancer):
         "workflow": WORKFLOW,
         "input": {**{k: info.get(k) for k in ("format", "filename", "tumour_sample", "normal_sample", "annotation",
                                               "example")},
-                  "assembly": info.get("assembly") or "GRCh38", "cancer_type": cancer},
+                  "assembly": info.get("assembly") or "GRCh38", "cancer_type": cancer,
+                  "medications": list(medications)},
         "parameters": _parameters(),
         "outcome": outcome,
         "trace": _trace(counts, tiered, status, tracks, cancer),
@@ -859,8 +868,9 @@ def run_pipeline(variants, info, cancer):
         "tracks": {name: [_public_candidate(c) for c in rows] for name, rows in tracks.items()},
         "resistance_only": [_public_candidate(c) for c in resistance_only],
         "network": build_network(tiered, tracks, resistance_only) if tiered else {"nodes": [], "edges": []},
+        "safety": safety_block,
         "australian_availability": availability,
-        "limitations": _limitations(info, status, notes),
+        "limitations": _limitations(info, status, notes, safety_block),
         "source_status": status,
     }
 
@@ -918,7 +928,7 @@ def _trace(counts, tiered, status, tracks, cancer):
     ]
 
 
-def _limitations(info, status, notes):
+def _limitations(info, status, notes, safety_block=None):
     out = [
         "SNVs / small indels only: fusions (ALK, ROS1, RET, NTRK) and copy-number changes (e.g. MET or ERBB2 "
         "amplification) are not detected, so drugs that depend on them cannot be found from this file.",
@@ -932,6 +942,11 @@ def _limitations(info, status, notes):
     if status.get("oncokb", {}).get("state") == "disabled":
         out.append("OncoKB is not configured (needs a licensed token), so tiers and levels come from CIViC and "
                    "cancerhotspots.org; IntOGen replaces the Cancer Gene Census for gene roles.")
+    if safety_block is not None:
+        out.append("Drug–drug interactions are checked from FDA labels (openFDA) and the FDA CYP / transporter table: "
+                   "pharmacokinetic interactions only, not additive toxicity or pharmacodynamic effects"
+                   + ("; no current medications were given, so only combination regimens were checked."
+                      if not safety_block["medications"] else "."))
     if info.get("format") == "vcf" and not info.get("assembly"):
         out.append("The VCF header does not name the genome build; GRCh38 was assumed.")
     return out

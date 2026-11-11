@@ -489,3 +489,47 @@ def test_vcf_word_report(client, vcf_reference, stub_live, monkeypatch):
         assert heading in text
     assert "Osimertinib" in text and "EGFR p.T790M" in text
     assert set(re.findall(r'w:anchor="(ref_\d+)"', xml)) <= set(re.findall(r'w:name="(ref_\d+)"', xml))
+
+
+def test_vcf_safety_flags_interactions_and_downranks_withdrawn(app, vcf_reference, stub_live, fake_labels):
+    """A current medication's interaction is flagged on the drug without changing its rank; a withdrawn drug loses
+    VCF_WITHDRAWN_PENALTY points."""
+    from app.reference.importers.fda_ddi import build_roles, parse_page
+    from app.reference.models import Drug, DrugCypRole, DrugSynonym, DrugWarning
+    from app.reference.text import norm
+    from app.services.variants.pipeline import run_pipeline
+    from tests.test_safety import FDA_PAGE
+
+    replace_tables([(Drug, [{"chembl_id": "CHEMBL1", "pref_name": "OSIMERTINIB", "max_phase": 4.0},
+                            {"chembl_id": "CHEMBL2", "pref_name": "CARBAMAZEPINE", "max_phase": 4.0},
+                            {"chembl_id": "CHEMBL3", "pref_name": "ERLOTINIB", "max_phase": 4.0}]),
+                    (DrugSynonym, [{"chembl_id": i, "synonym": n, "synonym_norm": norm(n), "syn_type": "PREF_NAME"}
+                                   for i, n in (("CHEMBL1", "OSIMERTINIB"), ("CHEMBL2", "CARBAMAZEPINE"),
+                                                ("CHEMBL3", "ERLOTINIB"))]),
+                    (DrugWarning, [{"warning_id": 1, "chembl_id": "CHEMBL3", "warning_type": "Withdrawn",
+                                    "warning_class": "test toxicity", "country": "Testland", "year": 2020}])])
+    rows, notes, _ = parse_page(FDA_PAGE)
+    replace_tables([(DrugCypRole, build_roles(rows, notes, {}, {"CARBAMAZEPINE": "CHEMBL2"}))])
+    db.session.commit()
+    fake_labels["osimertinib"] = "Strong CYP3A Inducers: Avoid concomitant use."
+
+    variants, info, _ = load_example("mock_luad_egfr_l858r_t790m")
+    plain = run_pipeline(variants, info, resolve_cancer_type("LUAD"))
+    variants, info, _ = load_example("mock_luad_egfr_l858r_t790m")
+    checked = run_pipeline(variants, info, resolve_cancer_type("LUAD"), ["carbamazepine"])
+
+    def find(evidence, drug):
+        return next(c for rows in evidence["tracks"].values() for c in rows if c["drug"] == drug)
+
+    osi_plain, osi = find(plain, "Osimertinib"), find(checked, "Osimertinib")
+    assert (osi["rank"], osi["score"]) == (osi_plain["rank"], osi_plain["score"])  # flagged, not scored
+    assert [(a["other"], a["severity"]) for a in osi["safety"]["interactions"]] == [("Carbamazepine", "major")]
+    assert checked["input"]["medications"] == ["carbamazepine"]
+    assert checked["safety"]["interactions"][0]["evidence_id"] in osi["evidence_ids"]
+    assert any(i["kind"] == "ddi" for i in checked["items"])
+
+    erlotinib = find(plain, "Erlotinib")
+    assert erlotinib["safety"]["withdrawn"] and erlotinib["safety"]["warnings"] == [
+        "Withdrawn (Testland, 2020): test toxicity"]
+    assert {"label": "withdrawn from the market (ChEMBL)", "points": -40} in erlotinib["score_parts"]
+    assert "down-ranked: withdrawn from the market (ChEMBL)" in erlotinib["track_reason"]

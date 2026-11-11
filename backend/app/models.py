@@ -42,6 +42,10 @@ class Query(db.Model):
     interactions = db.relationship(
         "QueryInteraction", back_populates="query", order_by="QueryInteraction.id", cascade="all, delete-orphan"
     )
+    drug_interactions = db.relationship(
+        "QueryDrugInteraction", back_populates="query", order_by="QueryDrugInteraction.id",
+        cascade="all, delete-orphan"
+    )
     user = db.relationship("User", back_populates="queries")
 
     def to_dict(self, include_evidence=True):
@@ -279,6 +283,32 @@ class Citation(db.Model):
         return cls(position=position, evidence_id=evidence_id, valid=valid, source=item.get("source"),
                    kind=item.get("kind"), pmid=int(pmid) if str(pmid or "").isdigit() else None,
                    url=(item.get("url") or "")[:500] or None)
+
+
+class QueryDrugInteraction(db.Model):
+    """A drug–drug interaction flagged for a query (services/safety.py): one row per alert, the relational view of
+    evidence["safety"]["interactions"]. The drug a recommendation is about, the other drug (a current medication or
+    the partner in a combination regimen), and why."""
+
+    __tablename__ = "query_drug_interactions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    query_id = db.Column(db.Integer, db.ForeignKey("queries.id", ondelete="CASCADE"), nullable=False, index=True)
+    evidence_id = db.Column(db.String(16), nullable=False)
+    drug_name = db.Column(db.String(255), nullable=False, index=True)  # the drug whose exposure / effect changes
+    chembl_id = db.Column(db.String(20), index=True)
+    other_drug_name = db.Column(db.String(255), nullable=False, index=True)
+    other_chembl_id = db.Column(db.String(20), index=True)
+    context = db.Column(db.String(32), nullable=False)  # current medication | combination regimen
+    severity = db.Column(db.String(16), nullable=False)  # major | moderate | minor
+    mechanism = db.Column(db.String(255))  # e.g. strong CYP3A inducer; CYP2D6 phenoconversion
+    rule = db.Column(db.String(32), nullable=False)  # label class | label names drug | FDA table | phenoconversion
+
+    query = db.relationship("Query", back_populates="drug_interactions")
+
+    def to_dict(self):
+        return {k: getattr(self, k) for k in ("evidence_id", "drug_name", "chembl_id", "other_drug_name",
+                                              "other_chembl_id", "context", "severity", "mechanism", "rule")}
 
 
 class QueryInteraction(db.Model):

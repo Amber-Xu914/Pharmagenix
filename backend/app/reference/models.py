@@ -71,6 +71,24 @@ class Drug(db.Model):
     first_approval = db.Column(db.Integer)
 
 
+class DrugWarning(db.Model):
+    """ChEMBL drug warnings: a withdrawal (with the earliest year and the countries) or a boxed ("black box")
+    warning, with its toxicity class. One row per ChEMBL warning record, attached to the parent drug."""
+
+    __tablename__ = "drug_warnings"
+
+    id = db.Column(db.Integer, primary_key=True)
+    warning_id = db.Column(db.Integer, nullable=False)  # ChEMBL warning_id
+    chembl_id = db.Column(db.String(20), db.ForeignKey("drugs.chembl_id", ondelete="CASCADE"), nullable=False,
+                          index=True)
+    warning_type = db.Column(db.String(32), nullable=False, index=True)  # Withdrawn | Black Box Warning
+    warning_class = db.Column(db.String(128))  # e.g. hepatotoxicity, cardiotoxicity
+    description = db.Column(db.Text)
+    country = db.Column(db.String(500))
+    year = db.Column(db.Integer)
+    refs = db.Column(db.JSON)  # [{"type", "id", "url"}]
+
+
 class DrugSynonym(db.Model):
     __tablename__ = "drug_synonyms"
 
@@ -340,6 +358,26 @@ class FdaPgxBiomarker(db.Model):
     gene_symbol = db.Column(db.String(64), index=True)
     hgnc_id = db.Column(db.String(20))
     labeling_sections = db.Column(db.JSON)
+
+
+class DrugCypRole(db.Model):
+    """FDA "Examples of Drugs that Interact with CYP Enzymes and Transporter Systems": one row per drug, enzyme or
+    transporter and role, e.g. paroxetine | CYP2D6 | inhibitor | strong. The FDA lists CYP3A as one pathway; it is
+    linked to CYP3A4. Used for drug–drug interaction checks and as drug–gene evidence."""
+
+    __tablename__ = "drug_cyp_roles"
+
+    id = db.Column(db.Integer, primary_key=True)
+    drug_name = db.Column(db.String(255), nullable=False)  # as in the FDA table, footnote numbers removed
+    drug_name_norm = db.Column(db.String(255), nullable=False, index=True)
+    chembl_id = db.Column(db.String(20), index=True)
+    system = db.Column(db.String(16), nullable=False)  # CYP | transporter
+    pathway = db.Column(db.String(32), nullable=False)  # as the FDA names it: CYP3A, CYP2D6, P-gp, OATP1B1
+    gene_symbol = db.Column(db.String(64), index=True)  # CYP3A4, CYP2D6, ABCB1, SLCO1B1
+    hgnc_id = db.Column(db.String(20))
+    role = db.Column(db.String(16), nullable=False)  # inhibitor | inducer | substrate
+    strength = db.Column(db.String(32))  # strong | moderate | weak | sensitive | moderate sensitive; NULL: transporter
+    notes = db.Column(db.Text)  # the FDA footnotes for this drug (e.g. dose dependence)
 
 
 # ---------- Workflow 4 (patient VCF): OncoTree, IntOGen, CIViC ----------

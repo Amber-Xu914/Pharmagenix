@@ -1,4 +1,5 @@
 import { CATEGORY_LABELS, GRADES, categoryColor, el, focusEvidence } from "./util.js";
+import { safetyMarkers } from "./safety.js";
 import { gradeBadge } from "./workflow.js";
 
 // Rows with an unspecified interaction type (about 90% of DGIdb) are collapsed to this many until expanded.
@@ -124,7 +125,7 @@ export class DgiTable {
   renderRow(r) {
     return el("tr", { class: "ev-row", "data-eids": r.evidence_ids.join(" ") },
       el("td", {}, r.gene),
-      el("td", {}, r.drug),
+      el("td", {}, r.drug, safetyMarkers(r.warnings, r.interactions).map((m) => [" ", m])),
       el("td", {}, r.categories.map((c) => el("span", { class: "cat-badge", style: `background:${categoryColor(c)}` },
         CATEGORY_LABELS[c] || c))),
       el("td", {}, r.url ? el("a", { href: r.url, target: "_blank", rel: "noopener" }, r.relation) : r.relation),
@@ -161,7 +162,7 @@ export class DgiTable {
   exportCsv() {
     const quote = (v) => `"${String(v ?? "").replaceAll('"', '""')}"`;
     const keys = ["gene", "drug", "categories", "relation", "grade", "grade_reason", "level", "score", "conflicts",
-                  "sources", "databases", "pmids", "pbs", "evidence_ids"];
+                  "warnings", "sources", "databases", "pmids", "pbs", "evidence_ids"];
     const lines = [keys.map(quote).join(",")];
     for (const r of this.filteredRows()) {
       lines.push(keys.map((k) => quote(Array.isArray(r[k]) ? r[k].join("; ") : r[k])).join(","));

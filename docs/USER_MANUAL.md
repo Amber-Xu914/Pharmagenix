@@ -94,6 +94,26 @@ side:
 Try **clopidogrel**: CYP2C19 comes out as the strongest pair (CPIC level A, SNP-specific response), matching the
 CPIC guideline. **codeine** gives CYP2D6.
 
+## 💊 Current medications and drug safety
+
+Every search form has an optional **Current medications** field (comma-separated, generic or brand names, e.g.
+`omeprazole, fluoxetine`). The results page then has a **Drug safety** section:
+
+- **Interactions**: each drug of the result checked against the medications, with a severity badge (*major*: avoid or
+  change the combination; *moderate*: monitor or adjust the dose; *minor*), the finding, the quoted sentence from the
+  drug's FDA label and the source. A *phenoconversion* alert means the medication inhibits a gene the drug has a CPIC
+  guideline for: for example fluoxetine makes a CYP2C19 normal metaboliser respond like a poor metaboliser to
+  clopidogrel, so the genotype-based recommendation may not apply.
+- **Warnings** (ChEMBL): withdrawn drugs and boxed warnings, also shown as badges in the interaction table.
+
+In the VCF workflow the drugs inside each combination regimen are always checked against each other. Interactions are
+flagged, not used to re-rank: change the co-medication or adjust the dose. Withdrawn drugs are down-ranked. Try it:
+search **Plavix** with current medications `omeprazole, fluoxetine`, or run the EGFR L858R + T790M example with
+`carbamazepine`.
+
+The check covers pharmacokinetic interactions found in FDA labels and the FDA CYP / transporter table; it is not a
+complete interaction checker (additive toxicity, QT prolongation and food interactions are not covered).
+
 ## 🧪 Patient VCF → candidate drugs
 
 1. Select **Patient VCF → candidate drugs**.
@@ -214,5 +234,7 @@ Open <http://127.0.0.1:5001/admin> while logged in as the administrator (or ente
 | "OncoKB not enabled" | No `ONCOKB_API_TOKEN` in `backend/.env`; CIViC is used alone. |
 | "PBS data has not been imported" | Run `flask --app run import-data pbs`. |
 | Comparison report: "API key not configured" | Add `OPENAI_API_KEY` to `backend/.env`. |
+| Drug safety: "openFDA … failed" | The FDA label service did not answer (or the 1,000-a-day limit without a key was reached). The FDA-table and CPIC rules still ran; set `OPENFDA_API_KEY` or run `warm-cache` before a demo. |
+| No drug warnings anywhere | The ChEMBL import predates the warnings: run `flask --app run import-data chembl`. |
 | ISM section: "AlphaGenome is not configured on this server" | Add `ALPHAGENOME_API_KEY` to `backend/.env` and run `pip install -r requirements-alphagenome.txt`, then restart. |
 | ISM heatmap: "AlphaGenome request failed" | The AlphaGenome service is down or the key's quota is used up. The rest of the report is unaffected; try again later. |

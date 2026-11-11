@@ -7,6 +7,7 @@ import { api } from "./api.js";
 import { restrictionList } from "./availability.js";
 import { NetworkView } from "./network.js";
 import { downloadReport } from "./report.js";
+import { medicationList, renderSafety, safetyMarkers } from "./safety.js";
 import { renderReports } from "./summary.js";
 import { el, focusEvidence } from "./util.js";
 import { SOURCE_NAMES, cacheNotice, renderTrace, sourcesChecked } from "./workflow.js";
@@ -124,11 +125,13 @@ export async function initVcf({ run }) {
       form.append("file", file);
       form.append("cancer_type", cancerType);
       form.append("test_data", "1");
+      form.append("medications", medicationList($("vcf-medications")).join(", "));
       if (compare) form.append("compare", "1");
       return run(() => api.vcfExplore(form), message);
     }
     const example = document.querySelector('input[name="vcf-example"]:checked')?.value;
-    return run(() => api.vcfExploreExample({ example, cancer_type: cancerType, compare }), message);
+    return run(() => api.vcfExploreExample({ example, cancer_type: cancerType, compare,
+                                             medications: medicationList($("vcf-medications")) }), message);
   });
 
   $("vcf-ask-form").addEventListener("submit", (event) => {
@@ -197,6 +200,11 @@ export function renderVcfQuery(query) {
   renderEstablished(evidence);
   renderExploratory(query, evidence);
   renderCoMutations(evidence);
+  const candidates = [...(evidence.tracks?.established || []), ...(evidence.tracks?.exploratory || [])];
+  const warned = candidates.filter((c) => c.safety?.warnings?.length).map((c) => ({ drug: c.drug, warnings: c.safety.warnings }));
+  const nSafety = renderSafety($("vcf-safety"), evidence, { warned, regimens: true,
+    formHint: "enter the patient's medications in the form to check every candidate" });
+  $("vcf-count-safety").textContent = nSafety + warned.length || "";
   renderAppendix(evidence);
   renderLimits(evidence.limitations || [], evidence.parameters);
   renderIsm(evidence);
@@ -278,7 +286,8 @@ function candidateTable(rows, availability) {
       const listing = pbs.get(c.drug.split(" + ")[0].toUpperCase());
       return el("tr", { class: "ev-row", "data-eids": c.evidence_ids.join(" ") },
         el("td", { class: "rank" }, c.rank),
-        el("td", { class: "drug" }, c.drug, c.mechanism ? el("div", { class: "muted small" }, c.mechanism) : ""),
+        el("td", { class: "drug" }, c.drug, c.mechanism ? el("div", { class: "muted small" }, c.mechanism) : "",
+          el("div", {}, safetyMarkers(c.safety?.warnings, c.safety?.interactions).map((m) => [m, " "]))),
         el("td", {}, c.variants.join(", ") || "–"),
         el("td", {}, levelBadge(c), c.best ? el("div", { class: "muted small" },
           `${c.best.disease_match} · ${c.best.specificity} match · ${c.n_evidence} item${c.n_evidence === 1 ? "" : "s"}`) : ""),
@@ -288,6 +297,8 @@ function candidateTable(rows, availability) {
           (c.co_occurrence || []).map((n) => el("div", { class: "note-co" }, `↔ ${n}`)),
           (c.resistance_notes || []).slice(0, 3).map((n) => el("div", { class: "note-resist" }, `⚠ ${n}`)),
           (c.conflicts || []).map((n) => el("div", { class: "report-warning" }, `⚠ ${n}`)),
+          (c.safety?.interactions || []).map((a) => el("div", { class: `note-ddi ${a.severity}` },
+            `⚠ ${a.severity} interaction (${a.context}): ${a.drug} with ${a.other}, ${a.mechanism} `, refLink(a.evidence_id))),
           (c.literature || []).length ? el("div", { class: "muted" }, "Literature: ", paperLinks(c.literature)) : ""),
         el("td", { class: "small" }, c.approved ? el("span", { title: MARKETED_TITLE }, "Marketed (ChEMBL phase 4)")
           : el("span", { class: "muted" }, "–"),
