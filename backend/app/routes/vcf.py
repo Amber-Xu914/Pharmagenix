@@ -6,6 +6,7 @@ from ..errors import APIError
 from ..reference.lookup import latest_releases
 from ..services.vcf_explorer import load_example, mock_examples, mock_path, read_upload, run_vcf_exploration
 from ..services.safety import parse_medications
+from ..services.variants.clinical import parse_clinical
 from ..services.variants import alphagenome
 from ..services.variants.cancer_types import lung_types
 from .explore import _query_response
@@ -40,8 +41,9 @@ def download_example(example_id):
 @bp.post("/explore")
 def explore():
     """Multipart upload (file, cancer_type, test_data, compare, medications) or JSON {example, cancer_type, compare,
-    medications}. medications: the patient's current medications (list, or comma-separated), checked for
-    drug–drug interactions with the candidates."""
+    medications, clinical}. medications: the patient's current medications (list, or comma-separated), checked for
+    drug–drug interactions with the candidates. clinical: optional context (stage, treatment, age, sex, smoking,
+    purity, ecog, brain_mets, notes; form fields "clinical_<key>"), shown in the report and given to the agents."""
     if request.files:
         upload = request.files.get("file")
         if upload is None:
@@ -54,6 +56,7 @@ def explore():
         info["filename"] = upload.filename
         cancer_type, compare = request.form.get("cancer_type"), request.form.get("compare") in ("1", "true", "on")
         medications = parse_medications(request.form.get("medications"))
+        clinical = parse_clinical(request.form)
     else:
         body = request.get_json(silent=True) or {}
         if not body.get("example"):
@@ -62,7 +65,8 @@ def explore():
         cancer_type = body.get("cancer_type") or example["cancer_type"]
         compare = bool(body.get("compare"))
         medications = parse_medications(body.get("medications"))
-    return _query_response(run_vcf_exploration(variants, info, cancer_type, compare, medications), 201)
+        clinical = parse_clinical(body.get("clinical"))
+    return _query_response(run_vcf_exploration(variants, info, cancer_type, compare, medications, clinical), 201)
 
 
 @bp.post("/ism")

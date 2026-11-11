@@ -22,6 +22,7 @@ from .llm.report_generator import generate_reports
 from .variants.cancer_types import resolve_cancer_type
 from .variants.parse import parse_upload
 from .variants.agents import build_prompts as agent_prompts, should_run as agents_should_run
+from .variants.clinical import build_prompt as clinical_prompt, should_run as clinical_should_run
 from .variants.pipeline import run_pipeline
 
 
@@ -62,7 +63,7 @@ def load_example(example_id):
     return variants, info, example
 
 
-def run_vcf_exploration(variants, info, cancer_type, compare=False, medications=()):
+def run_vcf_exploration(variants, info, cancer_type, compare=False, medications=(), clinical=None):
     """With MLflow tracking on, the search is one run and one trace (see tracking.py)."""
     cancer = resolve_cancer_type(cancer_type)
     label = info.get("example") or info.get("filename") or info.get("tumour_sample") or "uploaded sample"
@@ -73,7 +74,7 @@ def run_vcf_exploration(variants, info, cancer_type, compare=False, medications=
         db.session.add(query)
         db.session.commit()  # persist early so even a crash is visible in the admin panel
         try:
-            query.evidence = {**run_pipeline(variants, info, cancer, medications),
+            query.evidence = {**run_pipeline(variants, info, cancer, medications, clinical),
                               "cached_sources": replayed_hosts()}
             record_interactions(query)
             db.session.commit()
@@ -138,4 +139,6 @@ def _report(query, compare):
     if compare:
         targets.append((cfg["COMPARISON_PROVIDER"], "comparison"))
     extra = agent_prompts(query) if agents_should_run(query.evidence) else []
+    if clinical_should_run(query.evidence):
+        extra.append(clinical_prompt(query))
     generate_reports(query, targets, extra_prompts=extra)

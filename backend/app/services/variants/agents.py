@@ -14,7 +14,7 @@ import re
 
 from flask import current_app
 
-from ..prompts import format_evidence_item
+from ..prompts import clinical_summary, format_evidence_item
 
 AGENT_ROLES = ("literature", "biology", "hypothesis")
 AGENT_LABELS = {"literature": "Literature agent", "biology": "Biological interpretation agent",
@@ -60,6 +60,7 @@ def _context(evidence):
     tier3 = [v for v in variants if v["tier"] == 3]
     lines = [
         f"Cancer type: {evidence['input']['cancer_type']['name']} (OncoTree {evidence['input']['cancer_type']['code']})",
+        f"Clinical context: {clinical_summary((evidence['input'] or {}).get('clinical')) or 'none given'}",
         "",
         "Tiered variants (fixed):",
         *[f"- Tier {v['tier']} {v['notation']} [{v['evidence_id']}]: {v['tier_reason']}; pathways: "

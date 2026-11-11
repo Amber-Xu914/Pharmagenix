@@ -39,7 +39,11 @@ def test_gene_report(client, fake_sources):
     assert f"Pharmagenix_report_PGX-{query['id']:05d}_CYP2C19.docx" in resp.headers["Content-Disposition"]
 
     z, text, xml = open_docx(resp.data)
-    assert "Drug interactions of CYP2C19" in text and "Abstract" in text and "References" in text
+    assert "Drug–Gene Interaction Explorer: Gene → Drugs Report" in text and "Brief Results" in text
+    for heading in ("Abstract", "Introduction", "Methodology", "2.4 Evidence integration and grading", "Results",
+                    "3.2 Evidence overview", "3.5 Drug safety", "Interpretation", "Limitations and data gaps",
+                    "Conclusion", "References", "Methods and data sources", "Appendix A: Data provenance"):
+        assert heading in text, heading
     assert "CYP2C19: drug–gene interaction report" in z.read("word/header1.xml").decode()
     # The LLM's [E1] / [E2] are renumbered to the reference list, and every link has its target
     assert "[E1]" not in text and "[E2]" not in text
@@ -77,7 +81,7 @@ def test_citations_and_markdown():
     assert re.sub(r"<[^>]+>", "", runs) == "[1–3, 5]" and 'w:anchor="ref_5"' in runs
     paras = markdown_paragraphs("# Title\n## Overview\n**Bold** claim [E3, E1].\n\n- range [E4–E6]\n- bad [E99]", refs)
     text = [re.sub(r"<[^>]+>", "", p) for p in paras]
-    assert text == ["Overview", "Bold claim [1–2].", "range [3–5]", "bad [E99]"]  # numbered by first use
+    assert text == ["Overview", "Bold claim [1–2].", "•range [3–5]", "•bad [E99]"]  # numbered by first use
     assert refs.order == ["E3", "E1", "E4", "E5", "E6"]
 
 

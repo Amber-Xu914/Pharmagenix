@@ -768,3 +768,11 @@ footer { text-align: center; color: var(--muted); font-size: 0.8rem; padding: 20
 .label-quote { margin: 4px 0 0; padding: 4px 8px; border-left: 3px solid var(--border); color: var(--muted); font-style: italic; }
 .meds-field { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
 .meds-field input { width: 100%; }
+
+/* Optional clinical context on the VCF form */
+.clinical-fields { margin-top: 10px; }
+.clinical-fields summary { cursor: pointer; color: var(--muted); }
+.clinical-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 12px; margin-top: 8px; }
+.clinical-grid label { display: flex; flex-direction: column; gap: 3px; }
+.clinical-grid .wide { grid-column: 1 / -1; }
+#vcf-clinical:not(:empty) { margin-top: 14px; }

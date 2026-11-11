@@ -192,10 +192,16 @@ VCF + cancer type ──► POST /api/vcf/explore                    services/vc
                 │      interpretation (pathways, co-mutations such as STK11 + KRAS, TP53 + RB1) · Hypothesis
                 │    every statement cites an evidence ID or is labelled "Hypothesis"; a check flags violations
   7 Analysis    ├─ each track ranked separately by rules: established by level, subtype match, specificity,
-                │    resistance (−60, down-ranked); exploratory by evidence × Tier 3 S + literature support.
+                │    resistance (−60, down-ranked; a regimen inherits the strong resistance of any of its
+                │    drugs, e.g. erlotinib + ramucirumab with T790M); exploratory by evidence × Tier 3 S +
+                │    literature support.
                 │    Top VCF_TOP_PER_TRACK drugs in the report, the full lists in the appendix. "No approved
                 │    targeted therapy" when the established track has nothing without resistance. The Analysis
                 │    agent (template vcf_report v3) explains both tracks; it runs in parallel with the agents.
+                │    The Clinical summary agent (services/variants/clinical.py, VCF_CLINICAL_AGENT) turns the
+                │    ranked tracks and the optional clinical context into brief results, a regimen table and a
+                │    monitoring plan; [GK] marks general clinical knowledge, and a check flags it if it
+                │    recommends a down-ranked drug or a regimen containing one.
   8 Report      ▼  A. established clinical evidence · B. exploratory predictions (scores, Tier 3 F/R/B/S, agent
                    output) · co-mutations without a targeted drug · network · appendix (all tiered, low-priority
                    and QC-filtered variants with reasons) · limitations · disclaimer
@@ -364,6 +370,7 @@ backend/
       vcf_explorer.py         orchestrates Workflow 4 (patient VCF)
       variants/               Workflow 4: parse (VCF / MAF), vep, oncokb, cancer_types, matching, biology,
                               pipeline (deterministic tools), agents (exploration agents, LLM),
+                              clinical (Clinical summary agent, LLM),
                               alphagenome (in-silico mutagenesis heatmap, optional)
       report_docx.py          "Download report (.docx)": the Word report of a query
       safety.py               drug warnings and drug–drug interaction checks (FDA labels, FDA CYP table, CPIC)

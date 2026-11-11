@@ -126,12 +126,14 @@ export async function initVcf({ run }) {
       form.append("cancer_type", cancerType);
       form.append("test_data", "1");
       form.append("medications", medicationList($("vcf-medications")).join(", "));
+      for (const [key, value] of Object.entries(clinicalContext())) form.append(`clinical_${key}`, value);
       if (compare) form.append("compare", "1");
       return run(() => api.vcfExplore(form), message);
     }
     const example = document.querySelector('input[name="vcf-example"]:checked')?.value;
     return run(() => api.vcfExploreExample({ example, cancer_type: cancerType, compare,
-                                             medications: medicationList($("vcf-medications")) }), message);
+                                             medications: medicationList($("vcf-medications")),
+                                             clinical: clinicalContext() }), message);
   });
 
   $("vcf-ask-form").addEventListener("submit", (event) => {
@@ -144,6 +146,31 @@ export async function initVcf({ run }) {
   $("vcf-network-fit").addEventListener("click", () => network.fit());
   $("vcf-report-docx").addEventListener("click", () => downloadReport(currentQuery, network, $("vcf-report-docx"),
     $("vcf-report-docx-status")));
+}
+
+/** The optional clinical-context fields: {stage, treatment, age, ...} with the empty ones left out. */
+function clinicalContext() {
+  const out = {};
+  document.querySelectorAll("[data-clinical]").forEach((input) => {
+    if (input.value.trim()) out[input.dataset.clinical] = input.value.trim();
+  });
+  return out;
+}
+
+/** The Clinical summary agent's report (brief results, regimen options, monitoring), with the [GK] legend. */
+function renderClinical(query) {
+  const box = $("vcf-clinical");
+  box.replaceChildren();
+  if (!query.reports.some((r) => r.role === "clinical")) return;
+  const clinical = query.evidence?.input?.clinical || {};
+  box.append(el("p", { class: "agent-note" }, "Clinical summary (AI): regimen options and monitoring for the treating "
+    + "physician to weigh. [En] cites the evidence; [GK] marks general clinical knowledge that is not in the retrieved "
+    + "evidence and must be checked against current guidelines.",
+    Object.keys(clinical).length ? el("span", { class: "muted" }, ` Clinical context: ${Object.entries(clinical)
+      .map(([k, v]) => `${k.replace("_", " ")} ${v}`).join(", ")}.`) : ""));
+  const card = el("div");
+  box.append(card);
+  renderReports(card, query, { roles: ["clinical"], title: "Clinical summary", empty: "Not generated." });
 }
 
 function setMode(mode) {
@@ -196,6 +223,7 @@ export function renderVcfQuery(query) {
   $("vcf-trace").append(cacheNotice(evidence));
   renderVerdict(evidence);
   renderReports($("vcf-reports"), query, { title: "Analysis agent" });
+  renderClinical(query);
   document.querySelector("#vcf-sec-overview .ask").classList.toggle("hidden", evidence.outcome?.status !== "found");
   renderEstablished(evidence);
   renderExploratory(query, evidence);

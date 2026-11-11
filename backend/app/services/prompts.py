@@ -6,6 +6,11 @@ from ..extensions import db
 from ..models import PromptTemplate
 from .relations import labels
 
+
+def clinical_summary(clinical):
+    from .variants.clinical import summary  # imported here: clinical.py imports this module
+    return summary(clinical)
+
 DEFAULT_TEMPLATE_NAME = "dgi_report"
 DEFAULT_TEMPLATE_VERSION = 4  # v4: a gene (gene → drugs) or a drug (drug → genes)
 VCF_TEMPLATE_NAME = "vcf_report"  # Workflow 4 (patient VCF); its own active version, edited like the others
@@ -363,7 +368,9 @@ def render_vcf_prompt(template, query, evidence, max_items):
     context = {
         "entities": query.entities,
         "followup_question": query.followup_question,
-        "cancer_type": f"{cancer.get('name')} (OncoTree {cancer.get('code')})",
+        "cancer_type": f"{cancer.get('name')} (OncoTree {cancer.get('code')})"
+                       + (f"; clinical context: {clinical_summary(inp.get('clinical'))}"
+                          if inp.get("clinical") else ""),
         "sample": inp.get("example") or inp.get("filename") or query.entities[0],
         "filtering": (f"{counts.get('total', 0)} variants, {counts.get('qc_passed', 0)} passed QC; Tier 1: "
                       f"{counts.get('tier1', 0)}, Tier 2: {counts.get('tier2', 0)}, Tier 3: {counts.get('tier3', 0)}, "

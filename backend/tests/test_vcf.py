@@ -351,6 +351,29 @@ def test_agent_statement_check():
         "1 statement(s) neither cite evidence nor are labelled as a hypothesis"]
 
 
+CLINICAL_TEXT = """## Recommended first-line options
+Osimertinib is the top established option (score 97) for EGFR p.L858R with T790M [E1, E3].
+## Not recommended
+Gefitinib is down-ranked because T790M confers resistance to it [E1].
+## Confirm before treating
+Confirm the low-VAF T790M with an orthogonal assay such as ddPCR before it drives the choice [GK].
+## Co-mutations and exploratory
+STK11 p.Q37* has no targeted drug; exploratory drugs are for trial screening only [E3].
+## At progression
+Re-biopsy or plasma ctDNA for EGFR C797S and MET amplification at progression [GK].
+## Treatment options
+| Regimen | Key evidence | Fit for this patient | Main cautions | Recommendation |
+| --- | --- | --- | --- | --- |
+| Osimertinib 80 mg daily | CIViC level A [E1] | Covers L858R and T790M [E1] | QT, interstitial lung disease [GK] | Preferred |
+| Gefitinib | Resistance from T790M [E1] | Expected to be ineffective [E1] | n/a [GK] | Not recommended |
+## Monitoring and next steps
+- **Before starting:** baseline ECG and echocardiogram [GK].
+- **On treatment:** act promptly on new cough or dyspnoea [GK].
+- **At progression:** re-test for resistance mechanisms [GK].
+- **Clinical trials:** exploratory hypotheses are for trial screening only [E3].
+"""
+
+
 class FakeLLM:
     enabled, model = True, "fake"
 
@@ -361,8 +384,9 @@ class FakeLLM:
         from app.services.llm import LLMResult
 
         self.prompts.append((system, user))
-        return LLMResult(text="## Overview\nOsimertinib leads the established track [E1, E3].", model="fake",
-                         input_tokens=1, output_tokens=1, latency_ms=1)
+        text = CLINICAL_TEXT if system.startswith("You are the Clinical summary agent") else \
+            "## Overview\nOsimertinib leads the established track [E1, E3]."
+        return LLMResult(text=text, model="fake", input_tokens=1, output_tokens=1, latency_ms=1)
 
 
 def test_vcf_api_agents_and_followup(client, vcf_reference, stub_live, monkeypatch):
@@ -372,7 +396,7 @@ def test_vcf_api_agents_and_followup(client, vcf_reference, stub_live, monkeypat
     data = client.post("/api/vcf/explore", json={"example": "mock_luad_egfr_l858r_t790m"}).get_json()
     assert (data["entity_type"], data["entities"]) == ("vcf", ["mock_luad_egfr_l858r_t790m"])
     roles = {r["role"]: r for r in data["reports"]}
-    assert set(roles) == {"primary", "literature", "biology", "hypothesis"}
+    assert set(roles) == {"primary", "literature", "biology", "hypothesis", "clinical"}
     assert roles["primary"]["template_version"] == 3 and roles["literature"]["template_version"] is None
     assert all(r["status"] == "success" for r in data["reports"])
 
@@ -385,7 +409,7 @@ def test_vcf_api_agents_and_followup(client, vcf_reference, stub_live, monkeypat
 
     followup = client.post(f"/api/queries/{data['id']}/ask", json={"followup_question": "Why not gefitinib?"})
     assert followup.status_code == 201 and followup.get_json()["evidence"] == data["evidence"]
-    assert len(followup.get_json()["reports"]) == 4 and "Why not gefitinib?" in prompts[-1][1]
+    assert len(followup.get_json()["reports"]) == 5 and any("Why not gefitinib?" in u for _, u in prompts[-5:])
 
 
 def test_vcf_upload_needs_test_data_confirmation(client, vcf_reference, stub_live, fake_sources):
@@ -483,10 +507,20 @@ def test_vcf_word_report(client, vcf_reference, stub_live, monkeypatch):
     assert resp.status_code == 200 and "_EGFR_LUAD.docx" in resp.headers["Content-Disposition"]
     xml = zipfile.ZipFile(BytesIO(resp.data)).read("word/document.xml").decode()
     text = re.sub(r"<[^>]+>", "", xml)
-    assert "Candidate therapies for a lung adenocarcinoma variant profile" in text
-    for heading in ("Tiered variants.", "Established track", "Exploratory track", "Appendix A: Variants excluded",
-                    "4.1 Analysis", "4.4 Hypotheses"):
-        assert heading in text
+    assert "Drug–Gene Interaction Explorer: Candidate Drug Report" in text
+    for heading in ("Brief Results", "Recommended first-line options", "2.2 Stage 1: VCF quality control",
+                    "Tier definitions.", "Tier 3 score components.", "Score components.",
+                    "Variants removed and remaining at each QC step.", "3.3 Variant–drug evidence overview",
+                    "3.4.1 Beneficial drug interactions", "3.4.2 Potentially harmful drug interactions",
+                    "3.4.3 Genes with no drug evidence", "Ranked established candidates (Track A).",
+                    "Exploratory — not for treatment decisions.", "3.7 Co-mutations without a direct drug",
+                    "4.1 Treatment options for this patient", "4.2 Monitoring and next steps",
+                    "Limitations and data gaps", "Conclusion", "Methods and data sources",
+                    "Appendix A: Exploration agents", "Appendix B: Variants excluded", "Appendix C: Data sources"):
+        assert heading in text, heading
+    # Page 1 and Section 4.1 come from the Clinical summary agent, with [GK] kept as a label
+    assert "Osimertinib is the top established option" in text and "[GK]" in text
+    assert "Rows 1–5 were drafted by the Clinical summary agent" in text
     assert "Osimertinib" in text and "EGFR p.T790M" in text
     assert set(re.findall(r'w:anchor="(ref_\d+)"', xml)) <= set(re.findall(r'w:name="(ref_\d+)"', xml))
 
@@ -533,3 +567,42 @@ def test_vcf_safety_flags_interactions_and_downranks_withdrawn(app, vcf_referenc
         "Withdrawn (Testland, 2020): test toxicity"]
     assert {"label": "withdrawn from the market (ChEMBL)", "points": -40} in erlotinib["score_parts"]
     assert "down-ranked: withdrawn from the market (ChEMBL)" in erlotinib["track_reason"]
+
+
+
+def test_clinical_context_and_check():
+    from app.services.variants.clinical import check, not_provided, parse_clinical, sections, summary
+
+    clinical = parse_clinical({"clinical_stage": "iv", "clinical_treatment": "treatment-naive", "clinical_age": "58",
+                               "clinical_sex": "Female", "clinical_smoking": "never", "clinical_purity": "75%",
+                               "clinical_ecog": "9", "clinical_brain_mets": "maybe"})
+    assert clinical == {"stage": "IV", "treatment": "treatment-naive", "age": 58, "sex": "female", "smoking": "never",
+                        "purity": 75}  # an invalid ECOG or brain-metastases value is dropped
+    assert summary(clinical) == "Stage IV, treatment-naive; 58 y female, never-smoker; tumour purity ~75%"
+    assert not_provided(clinical) == ["ECOG", "brain imaging", "comorbidities", "co-medications"]
+    assert set(sections(CLINICAL_TEXT)) == {"Recommended first-line options", "Not recommended",
+                                            "Confirm before treating", "Co-mutations and exploratory",
+                                            "At progression", "Treatment options", "Monitoring and next steps"}
+    assert check(["Gefitinib"])(CLINICAL_TEXT) == []
+    bad = CLINICAL_TEXT.replace("| Not recommended |", "| Alternative |").replace("daily [GK].", "daily.")
+    bad = bad.replace("- **Before starting:** baseline ECG and echocardiogram [GK].",
+                      "- **Before starting:** baseline ECG and echocardiogram before the first dose.")
+    problems = check(["Gefitinib"])(bad)
+    assert any("gefitinib" in p for p in problems) and any("cite neither" in p for p in problems)
+
+
+
+def test_regimen_inherits_resistance_of_its_drug():
+    from app.services.variants.pipeline import STRONG_RESISTANCE_PENALTY, _inherit_resistance
+
+    erlotinib = {"drug": "Erlotinib", "strong_resistance": True, "strong_resistance_text": "EGFR p.T790M",
+                 "resistance_variant_ids": ["V4"], "resistance_notes": ["EGFR p.T790M: CIViC level A resistance"],
+                 "evidence_ids": ["E7"]}
+    combo = {"drug": "Erlotinib + Ramucirumab", "strong_resistance": False, "resistance_variant_ids": [],
+             "resistance_notes": [], "score_parts": [{"label": "CIViC level A", "points": 50}], "score": 100,
+             "track_reason": "CIViC level A", "evidence_ids": ["E9"]}
+    other = {"drug": "Amivantamab + Lazertinib", "strong_resistance": False, "score": 100}
+    _inherit_resistance({"ERLOTINIB": erlotinib}, {"established": [erlotinib, combo, other], "exploratory": []})
+    assert combo["strong_resistance"] and combo["score"] == 100 + STRONG_RESISTANCE_PENALTY
+    assert combo["resistance_notes"][0].startswith("Erlotinib in this regimen: EGFR p.T790M")
+    assert "E7" in combo["evidence_ids"] and not other["strong_resistance"]

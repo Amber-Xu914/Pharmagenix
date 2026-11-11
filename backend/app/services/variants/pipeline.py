@@ -345,6 +345,7 @@ def tier(passed, cancer, status):
         v["hotspot"] = hotspot_for(v, hotspots)
         v["subtype_frequency"] = (frequencies.get(v["gene"]) or (None,))[0]
         v["pathways"] = pathways_of(v["gene"])
+        v["driver_role"] = roles.get(v["gene"])  # IntOGen: Act (oncogene) / LoF (tumour suppressor)
         best = evidence[0] if evidence else None
         v["best_evidence"] = best and {"level": best["level"], "specificity": best["specificity"],
                                        "disease_match": MATCH_LABELS[best["disease_match"]],
@@ -538,6 +539,7 @@ def rank(candidates, tiered, mechanisms, literature):
             continue
         _score(c, variants, labels, drug_index, mechanisms, literature.get(key, []))
         tracks[c["track"]].append(c)
+    _inherit_resistance(candidates, tracks)
     for name, rows in tracks.items():
         # resistance down-ranks within the track; then by score
         rows.sort(key=lambda c: (bool(c["strong_resistance"]), -c["score"], c["drug"]))
@@ -545,6 +547,31 @@ def rank(candidates, tiered, mechanisms, literature):
             c["rank"] = i
             c["top"] = i <= cfg["VCF_TOP_PER_TRACK"]
     return tracks, resistance_only
+
+
+def _inherit_resistance(candidates, tracks):
+    """A regimen inherits strong resistance from any of its drugs: if T790M makes erlotinib ineffective, it makes
+    "Erlotinib + Ramucirumab" ineffective too, although CIViC records the resistance for erlotinib alone."""
+    resistant = {key: c for key, c in candidates.items() if c.get("strong_resistance") and " + " not in c["drug"]}
+    for rows in tracks.values():
+        for c in rows:
+            if c["strong_resistance"] or " + " not in c["drug"]:
+                continue
+            hits = [resistant[strip_salt(part)] for part in c["drug"].split(" + ") if strip_salt(part) in resistant]
+            if not hits:
+                continue
+            via = hits[0]
+            c["strong_resistance"] = True
+            c["strong_resistance_text"] = via["strong_resistance_text"]
+            c["resistance_variant_ids"] = list(dict.fromkeys(c["resistance_variant_ids"] + via["resistance_variant_ids"]))
+            c["resistance_notes"] = [f"{via['drug']} in this regimen: {n}" for n in via["resistance_notes"][:2]] \
+                + c["resistance_notes"]
+            c["score_parts"].append({"label": f"resistance to {via['drug']} in the regimen",
+                                     "points": STRONG_RESISTANCE_PENALTY})
+            c["score"] += STRONG_RESISTANCE_PENALTY
+            c["track_reason"] += (f"; down-ranked: resistance from the patient's {via['strong_resistance_text']} "
+                                  f"to {via['drug']}")
+            c["evidence_ids"] = list(dict.fromkeys(c["evidence_ids"] + via["evidence_ids"][:4]))
 
 
 def _validate(c, labels):
@@ -764,7 +791,7 @@ def _public_candidate(c):
     return out
 
 
-def run_pipeline(variants, info, cancer, medications=()):
+def run_pipeline(variants, info, cancer, medications=(), clinical=None):
     """variants: parsed records (parse.py); info: the parser's file info; cancer: the resolved cancer type;
     medications: the patient's current medications (names), checked against the candidates in stage 7."""
     status, notes = {}, []
@@ -851,7 +878,7 @@ def run_pipeline(variants, info, cancer, medications=()):
         "input": {**{k: info.get(k) for k in ("format", "filename", "tumour_sample", "normal_sample", "annotation",
                                               "example")},
                   "assembly": info.get("assembly") or "GRCh38", "cancer_type": cancer,
-                  "medications": list(medications)},
+                  "medications": list(medications), "clinical": clinical or {}},
         "parameters": _parameters(),
         "outcome": outcome,
         "trace": _trace(counts, tiered, status, tracks, cancer),
@@ -890,7 +917,8 @@ def _public(v, full=False):
     if full:
         keys += ["hgvsp", "hgvsc", "exon", "intron", "transcript", "clinvar", "best_evidence", "hotspot",
                  "tier_reason", "tier3", "gnomad_af", "alphamissense", "revel", "cadd_phred", "resolved",
-                 "evidence_id", "annotation_source", "literature", "normal_alt_reads", "subtype_frequency", "pathways"]
+                 "evidence_id", "annotation_source", "literature", "normal_alt_reads", "subtype_frequency", "pathways",
+                 "driver_role"]
     return {k: v.get(k) for k in keys}
 
 

@@ -158,6 +158,7 @@ class Config:
     MEDCPT_DEVICE = os.getenv("MEDCPT_DEVICE", "")  # "" = Apple GPU (mps) when available, else cpu
     VCF_TOP_PER_TRACK = 10            # drugs shown per track; the full lists go to the appendix
     VCF_AGENTS = True                 # run the exploration agents (LLM) on the exploratory track
+    VCF_CLINICAL_AGENT = True         # the Clinical summary agent: page-1 brief results, regimens, monitoring ([GK])
     # Stage 7 safety (services/safety.py): a withdrawn drug loses these points; drug–drug interactions and boxed
     # warnings are flagged on the drug, not scored.
     VCF_WITHDRAWN_PENALTY = -40
