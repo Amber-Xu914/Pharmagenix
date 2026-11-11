@@ -422,6 +422,11 @@ cd backend && .venv/bin/flask --app run mlflow-eval --case mock_luad_kras_g12c
   `gpt-6-luna` is a reasoning model and rejects any temperature, so `OPENAI_TEMPERATURE` stays empty. Swap the two
   with `PRIMARY_PROVIDER` / `COMPARISON_PROVIDER`. The anthropic SDK 1.x has no `temperature` argument, so the client
   sends it in the request body (`extra_body`).
+- **SDK pinned below 2.0**: anthropic 2.0.0 and later send API version `2026-10-21`, on which any request carrying
+  `temperature` (even in `extra_body`) is rejected with a 400 on every model. `requirements.txt` therefore pins
+  `anthropic>=1.8,<2`; a fresh install without the pin would make every primary report fail. Moving to a newer Claude
+  model (which also means dropping `temperature`) is planned, not done: see "Model choice and next steps" in
+  [docs/evaluation/README.md](docs/evaluation/README.md).
 - **OpenAI model ID**: `.env` defaults to `gpt-6-luna`. Confirm the exact model ID for "GPT-6 Luna" in your OpenAI
   dashboard. Calls go through the Responses API. If it is a reasoning model, `LLM_MAX_TOKENS` also covers reasoning
   tokens, and a budget that is too small returns an empty answer (recorded as failed).

@@ -6,6 +6,6 @@ cryptography>=42        # required by PyMySQL for MySQL 8 caching_sha2_password 
 python-dotenv>=1.0
 requests>=2.31
 openai>=1.60
-anthropic>=0.50
+anthropic>=1.8,<2    # 2.x sends API version 2026-10-21, which rejects `temperature` (see README: Models and temperature)
 mlflow>=3.17,<4      # optional: experiment tracking and tracing (MLFLOW_TRACKING_URI)
 pytest>=8.0

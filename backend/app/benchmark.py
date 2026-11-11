@@ -333,10 +333,18 @@ def _gold_groups(case):
 
 # ---------- the run ----------
 
-def run(arms=None, only=None, dry_run=False, echo=print, out_dir=OUT_DIR):
+def run(arms=None, only=None, dry_run=False, echo=print, out_dir=OUT_DIR, max_tokens=None):
+    """max_tokens: output limit for this run (default LLM_MAX_TOKENS). Running a subset of the arms keeps the saved
+    reports of the other arms (benchmark_reports.json) and re-scores everything together."""
     from .services.llm import get_llm_client
 
     cfg = current_app.config
+    max_tokens = max_tokens or cfg["LLM_MAX_TOKENS"]
+    keep = []
+    saved_file = Path(out_dir) / "benchmark_reports.json"
+    if arms and set(arms) != set(ARMS) and saved_file.exists():
+        keep = [r for r in json.loads(saved_file.read_text(encoding="utf-8")) if r["arm"] not in arms]
+        echo(f"Keeping the saved reports of {', '.join(sorted({r['arm'] for r in keep}))} ({len(keep)} reports).")
     arms = arms or ARMS
     providers = {"grounded-primary": cfg["PRIMARY_PROVIDER"], "grounded-comparison": cfg["COMPARISON_PROVIDER"],
                  "ungrounded-primary": cfg["PRIMARY_PROVIDER"]}
@@ -356,22 +364,36 @@ def run(arms=None, only=None, dry_run=False, echo=print, out_dir=OUT_DIR):
     models = {arm: cfg[f"{providers[arm].upper()}_MODEL"] for arm in arms}
     echo(f"\n{len(jobs)} LLM calls planned: {len(jobs) // max(len(arms), 1)} cases × {len(arms)} arms "
          f"({', '.join(f'{a} = {models[a]}' for a in arms)}); about "
-         f"{sum(len(j['system']) + len(j['user']) for j in jobs) // 4:,} input tokens in total.")
+         f"{sum(len(j['system']) + len(j['user']) for j in jobs) // 4:,} input tokens in total; output limit "
+         f"{max_tokens:,} tokens per report.")
     if dry_run:
         return None
 
     clients = {p: get_llm_client(p) for p in set(providers[a] for a in arms)}
+    for client in clients.values():  # a longer answer needs longer to generate (about 50 tokens a second)
+        client.max_tokens = max_tokens
+        client.timeout = max(client.timeout, max_tokens / 50 + 60)
 
     def call(job):
         try:
             res = clients[job["provider"]].complete(job["system"], job["user"])
             return {"text": res.text, "model": res.model, "latency_ms": res.latency_ms,
-                    "input_tokens": res.input_tokens, "output_tokens": res.output_tokens, "error": None}
+                    "input_tokens": res.input_tokens, "output_tokens": res.output_tokens, "error": None,
+                    "truncated": bool(res.truncated)}
         except Exception as exc:  # noqa: BLE001 - recorded, the other calls go on
             return {"text": "", "model": models[job["arm"]], "error": str(exc)[:300]}
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         answers = list(pool.map(call, jobs))
+    by_id = {c["id"]: c for c in cases}
+    for r in keep:  # the other arms' saved reports, scored with this run's evidence
+        jobs.append({"case": by_id[r["case"]], "arm": r["arm"], "ids": r.get("prompt_ids") or []})
+        answers.append({"text": r["text"], "model": r["model"], "error": r.get("error"),
+                        "latency_ms": r.get("latency_ms"), "input_tokens": r.get("input_tokens"),
+                        "output_tokens": r.get("output_tokens"), "truncated": r.get("truncated"),
+                        "max_tokens": r.get("max_tokens") or cfg["LLM_MAX_TOKENS"]})  # older files: the default
+        models[r["arm"]] = r["model"]
+    arms = [a for a in ARMS if a in models]
     pmids = [p for a, j in zip(answers, jobs) if not j["arm"].startswith("grounded") for p in PMID.findall(a["text"])]
     titles = _pubmed_titles(pmids) if pmids else {}
     rows = []
@@ -381,8 +403,11 @@ def run(arms=None, only=None, dry_run=False, echo=print, out_dir=OUT_DIR):
         rows.append({"case": case["id"], "workflow": case["workflow"], "arm": job["arm"], "model": ans["model"],
                      "prompt_ids": job["ids"],
                      "error": ans["error"], "latency_ms": ans.get("latency_ms"),
-                     "input_tokens": ans.get("input_tokens"), "output_tokens": ans.get("output_tokens"), **metrics,
-                     "text": ans["text"]})
+                     "input_tokens": ans.get("input_tokens"), "output_tokens": ans.get("output_tokens"),
+                     "max_tokens": ans.get("max_tokens") or max_tokens,
+                     "truncated": ans.get("truncated") if ans.get("truncated") is not None
+                     else (ans.get("output_tokens") or 0) >= (ans.get("max_tokens") or max_tokens),
+                     **metrics, "text": ans["text"]})
         echo(f"  {job['arm']:<20} {case['id']:<28} " + (f"ERROR {ans['error']}" if ans["error"] else
              f"coverage {_fmt(metrics.get('sentence_coverage'))}, citations valid {_fmt(metrics.get('citation_validity'))}, "
              f"unsupported drugs {_fmt(metrics.get('unsupported_drugs'))}, recall {_fmt(metrics.get('gold_recall'))}"))
@@ -419,6 +444,9 @@ def rescore(echo=print, out_dir=OUT_DIR):
         rows.append({"case": r["case"], "workflow": case["workflow"], "arm": arm, "model": r["model"],
                      "prompt_ids": ids, "error": r.get("error"), "latency_ms": num("latency_ms"),
                      "input_tokens": num("input_tokens"), "output_tokens": num("output_tokens"),
+                     "max_tokens": r.get("max_tokens") or cfg["LLM_MAX_TOKENS"],
+                     "truncated": r.get("truncated") if r.get("truncated") is not None
+                     else (num("output_tokens") or 0) >= (r.get("max_tokens") or cfg["LLM_MAX_TOKENS"]),
                      **score(case, arm, r["text"], ids, dictionary, titles), "text": r["text"]})
     arms = [a for a in ARMS if a in models]
     summary = summarise(rows, arms)
@@ -481,14 +509,15 @@ def write(rows, summary, models, out_dir, pubmed_checked=True):
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     keys = ["case", "workflow", "arm", "model", "error", "citations", "citation_validity", "pmid_on_topic",
             "sentences", "sentence_coverage", "drugs_named", "unsupported_drugs", "gold_recall", "unsafe_mentions",
-            "latency_ms", "input_tokens", "output_tokens"]
+            "latency_ms", "input_tokens", "output_tokens", "max_tokens", "truncated"]
     with open(out_dir / "benchmark_cases.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore", lineterminator="\n")
         w.writeheader()
         w.writerows(rows)
     (out_dir / "benchmark_reports.json").write_text(json.dumps(
         [{k: r.get(k) for k in ("case", "arm", "model", "text", "prompt_ids", "error", "latency_ms", "input_tokens",
-                                "output_tokens")} for r in rows], indent=1, ensure_ascii=False), encoding="utf-8")
+                                "output_tokens", "max_tokens", "truncated")} for r in rows], indent=1,
+                   ensure_ascii=False), encoding="utf-8")
     arms = list(summary["arms"])
     lines = [f"# Benchmark: grounded vs. ungrounded LLM reports", "",
              f"Run {stamp}. Generated by `flask --app run benchmark` (backend/app/benchmark.py); per-case values in "
@@ -513,6 +542,14 @@ def write(rows, summary, models, out_dir, pubmed_checked=True):
         lines.append(f"| {t['label']} | {t['vs']} | {t['n']} | {t['median_difference']:+.3g} | {t['p']:.3g} | "
                      f"{t['p_bonferroni']:.3g} |")
     errors = [r for r in rows if r["error"]]
+    lines += ["", "Output limit and truncated reports per arm (a truncated report was cut off at the limit):", "",
+              "| Arm | Output limit (tokens) | Truncated | Longest report (tokens) |", "| --- | --- | --- | --- |"]
+    for arm in arms:
+        mine = [r for r in rows if r["arm"] == arm]
+        limits = sorted({int(r["max_tokens"]) for r in mine if r.get("max_tokens")})
+        longest = max((r.get("output_tokens") or 0 for r in mine), default=0)
+        lines.append(f"| {arm} | {', '.join(f'{x:,}' for x in limits) or '–'} | "
+                     f"{sum(1 for r in mine if r.get('truncated'))} of {len(mine)} | {longest:,.0f} |")
     lines += ["", "Notes:", "",
               "- Citation validity: grounded arms cite evidence IDs, checked against the IDs in the prompt; the "
               "ungrounded arm cites PMIDs, checked against PubMed" + ("" if pubmed_checked else " (PubMed was not "

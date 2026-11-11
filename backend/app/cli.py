@@ -100,10 +100,11 @@ def register_cli(app):
     @app.cli.command("benchmark")
     @click.option("--dry-run", is_flag=True, help="Build the evidence and print the plan; no LLM calls.")
     @click.option("--rescore", is_flag=True, help="Recompute the metrics from the saved reports; no LLM calls.")
+    @click.option("--max-tokens", type=int, help="Output limit per report for this run (default LLM_MAX_TOKENS).")
     @click.option("--case", "cases", multiple=True, help="Only this case (repeatable): a mock VCF id, gene or drug.")
     @click.option("--arm", "arms", multiple=True, type=click.Choice(["grounded-primary", "grounded-comparison",
                                                                      "ungrounded-primary"]))
-    def benchmark(dry_run, rescore, cases, arms):
+    def benchmark(dry_run, rescore, max_tokens, cases, arms):
         """Grounded vs. ungrounded LLM reports on the mock VCFs and demo searches (app/benchmark.py); writes
         docs/evaluation/benchmark.md, benchmark_cases.csv and benchmark_reports.json."""
         from .benchmark import OUT_DIR, rescore as rescore_saved, run
@@ -112,7 +113,8 @@ def register_cli(app):
             rescore_saved(echo=click.echo)
             click.echo(f"\nResults: {OUT_DIR / 'benchmark.md'}")
             return
-        summary = run(arms=list(arms) or None, only=list(cases) or None, dry_run=dry_run, echo=click.echo)
+        summary = run(arms=list(arms) or None, only=list(cases) or None, dry_run=dry_run, echo=click.echo,
+                      max_tokens=max_tokens)
         if summary:
             click.echo(f"\nResults: {OUT_DIR / 'benchmark.md'}")
 

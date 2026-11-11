@@ -120,6 +120,7 @@ def test_benchmark_scores_grounded_and_ungrounded_reports(app, vcf_reference, st
 
     class Fake:
         enabled = True
+        max_tokens, timeout = 4000, 90  # like LLMClient
 
         def __init__(self, provider):
             self.provider = provider
@@ -149,3 +150,13 @@ def test_benchmark_scores_grounded_and_ungrounded_reports(app, vcf_reference, st
     assert summary["arms"]["grounded-primary"]["sentence_coverage"]["n"] == 1
     assert (tmp_path / "benchmark.md").read_text().startswith("# Benchmark")
     assert {r["arm"] for r in json.loads((tmp_path / "benchmark_reports.json").read_text())} == set(benchmark.ARMS)
+
+    # Re-running one arm with a higher output limit keeps the other arms' reports and re-scores them together
+    before = {r["arm"]: r["text"] for r in json.loads((tmp_path / "benchmark_reports.json").read_text())}
+    benchmark.run(arms=["ungrounded-primary"], only=["mock_luad_egfr_l858r_t790m"], echo=lambda *a: None,
+                  out_dir=tmp_path, max_tokens=8000)
+    after = {r["arm"]: r for r in json.loads((tmp_path / "benchmark_reports.json").read_text())}
+    assert set(after) == set(benchmark.ARMS)
+    assert after["grounded-primary"]["text"] == before["grounded-primary"]
+    assert after["ungrounded-primary"]["max_tokens"] == 8000 and after["grounded-primary"]["max_tokens"] == 4000
+    assert "| ungrounded-primary | 8,000 | 0 of 1 |" in (tmp_path / "benchmark.md").read_text()
