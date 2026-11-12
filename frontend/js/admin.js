@@ -1,10 +1,11 @@
 import { adminApi } from "./api.js";
-import { el, formatDate } from "./util.js";
+import { el, formatDate, labelTableCells } from "./util.js";
 
 const $ = (id) => document.getElementById(id);
 const TOKEN_KEY = "dgi-admin-token";
 let admin = null;
 let templates = [];
+labelTableCells();
 
 // ---------- Login ----------
 

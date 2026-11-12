@@ -8,7 +8,7 @@ import { downloadReport } from "./report.js";
 import { medicationList, renderSafety } from "./safety.js";
 import { renderReports } from "./summary.js";
 import { DgiTable } from "./table.js";
-import { categoryColor, el } from "./util.js";
+import { categoryColor, el, labelTableCells } from "./util.js";
 import { initVcf, renderVcfQuery, vcfEvidenceTarget } from "./vcf.js";
 import { cacheNotice, renderProfiles, renderResolution, renderTrace, renderVerdict } from "./workflow.js";
 
@@ -284,4 +284,5 @@ const spy = new IntersectionObserver((entries) => {
 }, { rootMargin: "-35% 0px -60% 0px" });
 document.querySelectorAll("#results .section").forEach((section) => spy.observe(section));
 
+labelTableCells();
 init();
