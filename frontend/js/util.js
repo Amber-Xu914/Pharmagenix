@@ -79,3 +79,36 @@ export function describeEvidence(item) {
 export function focusEvidence(eid) {
   document.dispatchEvent(new CustomEvent("evidence:focus", { detail: eid }));
 }
+
+/**
+ * Copy each table's column headers onto its body cells (data-label) and mark the table "stacks", so on
+ * phones the CSS can show every row as a card of "header: value" lines instead of a squeezed grid.
+ * Watches root for tables that are rendered or re-rendered later (sorting, filtering, new results).
+ */
+export function labelTableCells(root = document.body) {
+  const label = (table) => {
+    const heads = [...table.querySelectorAll(":scope > thead > tr:last-child > th")].map((th) => th.textContent.trim());
+    if (!heads.length) return;
+    table.classList.add("stacks");
+    for (const row of table.querySelectorAll(":scope > tbody > tr")) {
+      let col = 0;
+      for (const cell of row.cells) {
+        if (cell.colSpan === 1 && heads[col]) cell.dataset.label = heads[col];
+        col += cell.colSpan;
+      }
+    }
+  };
+  root.querySelectorAll("table").forEach(label);
+  new MutationObserver((mutations) => {
+    const tables = new Set();
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        const own = node.closest("table");
+        if (own) tables.add(own);
+        node.querySelectorAll("table").forEach((t) => tables.add(t));
+      }
+    }
+    tables.forEach(label);
+  }).observe(root, { childList: true, subtree: true });
+}

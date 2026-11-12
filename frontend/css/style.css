@@ -322,7 +322,8 @@ legend { font-weight: 600; font-size: 0.9rem; margin-bottom: 6px; }
 .entity-header { padding: 18px 22px; }
 .eh-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .eh-title { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.eh-title h2 { font-size: 1.9rem; margin: 0; letter-spacing: -0.01em; }
+.eh-title { min-width: 0; }
+.eh-title h2 { font-size: 1.9rem; margin: 0; letter-spacing: -0.01em; overflow-wrap: anywhere; }
 .type-badge {
   font-size: 0.75rem;
   font-weight: 700;
@@ -571,7 +572,7 @@ button.suggestion:hover { border-color: var(--accent); background: var(--accent-
 .badge.flagged { color: var(--warn); }
 .badge.failed { color: var(--danger); }
 .report-body h2 { font-size: 1rem; margin: 16px 0 6px; }
-.report-body p, .report-body li { overflow-wrap: anywhere; }
+.report-body p, .report-body li, .report-body h1, .report-body h2, .report-body h3 { overflow-wrap: anywhere; }
 .report-warning { font-size: 0.85rem; color: var(--warn); margin: 6px 0; }
 .report-error { color: var(--danger); }
 
@@ -746,7 +747,8 @@ footer { text-align: center; color: var(--muted); font-size: 0.8rem; padding: 20
 .ism-grid .ism-cell.observed { outline: 2px solid var(--text); outline-offset: -2px; font-weight: 700; }
 .ism-grid .ism-pos { text-align: center; font-size: 0.74rem; color: var(--muted); padding-top: 4px; }
 .ism-grid .ism-pos.centre { color: var(--text); font-weight: 700; }
-.ism-legend { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.ism-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; white-space: nowrap; }
+.ism-legend > span:last-child { flex: 1 1 220px; white-space: normal; }
 .ism-legend .ramp { width: 160px; height: 10px; border-radius: 3px;
   background: linear-gradient(90deg, var(--ism-neg), var(--surface-2), var(--ism-pos)); }
 
@@ -776,3 +778,59 @@ footer { text-align: center; color: var(--muted); font-size: 0.8rem; padding: 20
 .clinical-grid label { display: flex; flex-direction: column; gap: 3px; }
 .clinical-grid .wide { grid-column: 1 / -1; }
 #vcf-clinical:not(:empty) { margin-top: 14px; }
+
+/* ---------- Phones ---------- */
+@media (max-width: 760px) {
+  .searchbar button { flex: 1 1 100%; }
+}
+
+@media (max-width: 640px) {
+  /* iOS Safari zooms the page in when a focused field's text is smaller than 16px */
+  input[type="text"], input[type="password"], input[type="search"], input[type="email"], input[type="number"],
+  select, textarea { font-size: 16px; }
+
+  .container { padding: 14px 10px 40px; }
+  .card, .entity-header { padding: 14px; margin-bottom: 14px; }
+  .section-nav { margin: 0 -10px 14px; padding: 6px 10px; }
+  .section { scroll-margin-top: 56px; }
+  .report-body h1 { font-size: 1.35rem; margin: 0 0 10px; }
+  .report-body h2 { font-size: 1.05rem; }
+
+  .mode-switch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
+  .mode-switch button { padding: 6px 4px; font-size: 0.82rem; }
+
+  .table-tools #table-filter { flex: 1 1 100%; }
+  .table-tools select { flex: 1 1 auto; min-width: 0; }
+
+  /* A smaller canvas leaves room to scroll the page past the network with a finger */
+  #network, .network { height: min(60vh, 420px); }
+  .ism-grid .ism-cell { min-width: 56px; height: 38px; }
+
+  /* Tables as cards: one card per row, each cell labelled with its column header (labelTableCells in util.js) */
+  /* No inner scroll box: a scroll area inside the scrolling page is easy to miss on a touch screen */
+  .table-wrap { max-height: none; overflow: visible; border: none; border-radius: 0; }
+  table.stacks, table.stacks tbody, table.stacks tr { display: block; width: 100%; }
+  table.stacks thead { display: none; }
+  table.stacks:has(th[data-sort]) thead { display: block; margin-bottom: 8px; }
+  table.stacks thead tr { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  table.stacks thead tr::before { content: "Sort by"; font-size: 0.8rem; color: var(--muted); }
+  table.stacks th { position: static; padding: 3px 10px; font-size: 0.8rem; border: 1px solid var(--border); border-radius: 999px; }
+  table.stacks tbody tr { margin-bottom: 8px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+  table.stacks td { display: flow-root; min-width: 0; max-width: none; padding: 4px 0 4px 7.5em; border: none; white-space: normal; }
+  table.stacks td * { white-space: normal; max-width: 100%; } /* long badges wrap instead of widening the page */
+  table.stacks td { overflow-wrap: anywhere; }
+  table.stacks td + td { border-top: 1px dashed var(--border); }
+  table.stacks td::before {
+    content: attr(data-label);
+    float: left;
+    width: 7em;
+    margin-left: -7.5em;
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  table.stacks td:not([data-label]) { padding-left: 0; }
+  table.stacks td:not([data-label])::before { content: none; }
+  table.stacks td:empty { display: none; }
+}
