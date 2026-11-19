@@ -50,18 +50,18 @@ def normalize_relation_types(raw):
 
 
 def run_exploration(name, relation_types, compare=False, followup_question=None, parent=None,
-                    confirm_unresolved=False, entity_type="gene", medications=()):
+                    confirm_unresolved=False, entity_type="gene", medications=(), genotypes=()):
     """name: a gene (entity_type "gene": gene -> drugs) or a drug ("drug": drug -> genes).
     confirm_unresolved: the user chose to search an unrecognised name as typed (it goes to the APIs as-is).
     With MLflow tracking on, the search is one run and one trace (see tracking.py)."""
     with tracking.track_search("gene", str(name)[:100], {entity_type: name, "relation_types": relation_types,
                                                          "followup": followup_question, "compare": compare}) as handle:
         return _run_exploration(name, entity_type, relation_types, compare, followup_question, parent,
-                                confirm_unresolved, handle, medications)
+                                confirm_unresolved, handle, medications, genotypes)
 
 
 def _run_exploration(name, entity_type, relation_types, compare, followup_question, parent, confirm_unresolved,
-                     handle, medications=()):
+                     handle, medications=(), genotypes=()):
     cfg = current_app.config
     name = normalize_name(name, entity_type)
     relation_types = normalize_relation_types(relation_types)
@@ -95,7 +95,7 @@ def _run_exploration(name, entity_type, relation_types, compare, followup_questi
             query.evidence = parent.evidence  # follow-up on same data: skip the external API calls
         else:
             evidence = collect_evidence(name, relation_types, resolved=resolved, entity_type=entity_type,
-                                        medications=medications)
+                                        medications=medications, genotypes=genotypes)
             query.evidence = {**evidence, "cached_sources": replayed_hosts()}
         record_interactions(query)
         db.session.commit()

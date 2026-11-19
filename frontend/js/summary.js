@@ -14,6 +14,7 @@ const PROVIDER_NAMES = { openai: "OpenAI", anthropic: "Claude" };
  */
 export function renderReports(container, query, {
   alerts = () => null, roles = ["primary", "comparison"], title = "AI summary", tabLabel = null, empty = null,
+  brief = null,
 } = {}) {
   const evidence = new Map((query.evidence?.items || []).map((item) => [item.id, item]));
   // Admin retries append new reports, so show the latest one per role (only the roles this card shows).
@@ -22,7 +23,7 @@ export function renderReports(container, query, {
   const reports = [...latest.values()];
 
   const panels = reports.map((report, i) => {
-    const panel = reportPanel(report, evidence, alerts);
+    const panel = brief ? briefPanel(report, brief) : reportPanel(report, evidence, alerts);
     panel.hidden = i > 0;
     return panel;
   });
@@ -41,13 +42,36 @@ export function renderReports(container, query, {
 
   container.replaceChildren(
     el("div", { class: "ai-head" },
-      el("h2", {}, el("span", { class: "ai-spark", "aria-hidden": "true" }, "✦"), ` ${title}`),
+      el("h2", {}, title),
       tabs || ""),
     ...(panels.length ? panels : [el("p", { class: "muted" }, empty || (["none", "tier3_only"].includes(query.evidence?.outcome?.status)
       ? `Not generated: no ${query.entity_type === "vcf" ? "variant passed QC and tiering" : "known interaction was found"}, so the AI `
         + "makes no claims. The sources checked are listed above."
       : "No report was generated."))]),
   );
+}
+
+/** Clinical view: the report's first section only, with a link to the full report (brief: its anchor). */
+function briefPanel(report, href) {
+  const panel = el("div", { class: "report" });
+  if (report.status === "failed") {
+    panel.append(el("p", { class: "report-error" }, `AI summary not available: ${report.error_message || "generation failed"}`));
+    return panel;
+  }
+  const { preview } = splitReport(renderMarkdown(report.content_md || "", report.id));
+  const body = el("div", { class: "report-body" }, preview);
+  body.addEventListener("click", (event) => {
+    const link = event.target.closest("a.cite");
+    if (!link) return;
+    event.preventDefault();
+    focusEvidence(link.dataset.eid);
+  });
+  panel.append(
+    report.status === "flagged" ? el("p", { class: "report-warning" }, `⚠ Automatic quality check: ${report.error_message}`) : "",
+    body,
+    el("p", { class: "ai-meta small muted" }, `${report.model} · written from the cited evidence · research use only. `,
+      el("a", { href }, "Read the full report →")));
+  return panel;
 }
 
 function reportPanel(report, evidence, alerts) {
@@ -89,10 +113,15 @@ function reportPanel(report, evidence, alerts) {
 function splitReport(html) {
   const holder = el("div", { html });
   const nodes = [...holder.childNodes].filter((n) => n.nodeType === 1 || n.textContent.trim());
-  const body = nodes[0]?.tagName === "H2" ? nodes.slice(1) : nodes; // the card title replaces the first heading
+  let start = 0; // the card title replaces a leading "# Report title", a rule and the first "## Overview" heading
+  while (["H1", "HR"].includes(nodes[start]?.tagName)) start++;
+  if (nodes[start]?.tagName === "H2") start++;
+  const body = nodes.slice(start);
   const next = body.findIndex((n) => n.tagName === "H2");
   const preview = next > 0 ? body.slice(0, next) : body.slice(0, 2);
-  return { preview: el("div", { class: "report-preview" }, preview), rest: body.slice(preview.length) };
+  const shown = preview.slice(0, preview.length);
+  while (shown.at(-1)?.tagName === "HR") shown.pop(); // a "---" before the next section
+  return { preview: el("div", { class: "report-preview" }, shown), rest: body.slice(preview.length) };
 }
 
 function renderMarkdown(markdown, reportId) {

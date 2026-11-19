@@ -114,6 +114,41 @@ search **Plavix** with current medications `omeprazole, fluoxetine`, or run the 
 The check covers pharmacokinetic interactions found in FDA labels and the FDA CYP / transporter table; it is not a
 complete interaction checker (additive toxicity, QT prolongation and food interactions are not covered).
 
+## 🧬 Patient genotypes → CPIC recommendation
+
+The gene and drug search form has an optional **Patient genotypes** field, one result per gene separated by `;`:
+a diplotype (`CYP2C19 *2/*2`, either allele order), a phenotype (`CYP2D6 poor metabolizer`, or `PM` / `IM` / `NM` /
+`RM` / `UM`) or an HLA allele status (`HLA-B*57:01 negative`). The app:
+
+1. maps each diplotype to its CPIC phenotype (CPIC's diplotype tables);
+2. for every drug in the result with a CPIC guideline for that gene, shows the CPIC recommendation for exactly that
+   phenotype, per population (e.g. clopidogrel: ACS/PCI, non-ACS, neurovascular), with its strength. Guidelines that
+   need two genes (amitriptyline: CYP2C19 + CYP2D6) say which result is still missing;
+3. flags *phenoconversion* when a current medication strongly or moderately inhibits the gene (fluoxetine and
+   CYP2D6): the patient may respond like a poorer metaboliser than the genotype says.
+
+The results appear at the top of **Pharmacogenomics**, in **At a glance**, in the AI report (cited like any other
+evidence) and in the Word report (page 1 and Section 3.4). Try it: search **clopidogrel** with genotype
+`CYP2C19 *2/*2` and current medication `omeprazole`.
+
+## 🗂 Result tabs: Clinical, Extra, Export
+
+Every result opens on **Clinical**, the view for a clinic visit: At a glance, the AI summary's first paragraph, the
+patient-genotype recommendations and drug safety (for a VCF: the Clinical summary, the established treatment options
+and drug safety). **Extra** holds everything else: the workflow trace, the full AI report with follow-up questions,
+the profile, the interaction table and network, pharmacogenomic evidence, literature and PBS details (for a VCF: the
+Analysis agent, exploratory predictions, co-mutations, network, appendix, limitations and ISM heatmap). **Export** has
+the Word report, the CSV of the interaction table and a link to the result. Clicking a citation such as [E12] in the
+Clinical view opens Extra at that evidence.
+
+## ⚡ At a glance
+
+Above the AI summary, a short rule-based box (not written by the AI) gives one line per decision: the genotype
+recommendation, the best-supported drugs or genes with their PBS status, the worst drug interaction and any warnings.
+For a patient VCF it shows the first targeted option for consideration (evidence level, variants, PBS), the
+alternatives, the drugs not recommended because of resistance, and the worst interaction. Each line links to its
+evidence.
+
 ## 🧪 Patient VCF → candidate drugs
 
 1. Select **Patient VCF → candidate drugs**.

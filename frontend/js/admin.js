@@ -1,11 +1,18 @@
 import { adminApi } from "./api.js";
-import { el, formatDate, labelTableCells } from "./util.js";
+import { el, formatDate, labelTableCells, latestOnly } from "./util.js";
 
 const $ = (id) => document.getElementById(id);
 const TOKEN_KEY = "dgi-admin-token";
 let admin = null;
 let templates = [];
 labelTableCells();
+// One per view: a slow response to an earlier click or filter must not overwrite a newer one
+const logsRequest = latestOnly();
+const logRequest = latestOnly();
+const templatesRequest = latestOnly();
+const failuresRequest = latestOnly();
+const feedbackRequest = latestOnly();
+const statsRequest = latestOnly();
 
 // ---------- Login ----------
 
@@ -67,7 +74,9 @@ const statusBadge = (status) => el("span", { class: `badge ${status}` }, status)
 // ---------- Prompt logs ----------
 
 async function loadLogs(page = 1) {
+  const isLatest = logsRequest();
   const data = await admin.logs({ page, status: $("log-status").value, provider: $("log-provider").value });
+  if (!isLatest()) return;
   renderTable($("log-table"), ["ID", "Time", "Model", "Status", "Latency", "Tokens"], data.items.map((log) =>
     el("tr", { class: "clickable", onclick: () => showLog(log.id) },
       el("td", {}, log.id),
@@ -80,7 +89,10 @@ async function loadLogs(page = 1) {
 }
 
 async function showLog(id) {
+  const isLatest = logRequest();
+  $("log-detail").replaceChildren(el("p", { class: "muted" }, `Loading log #${id}…`));
   const log = await admin.log(id);
+  if (!isLatest()) return;
   $("log-detail").replaceChildren(
     el("h3", {}, `Log #${log.id} · ${log.model} `, statusBadge(log.status)),
     el("p", { class: "small" },
@@ -99,7 +111,10 @@ $("log-refresh").addEventListener("click", () => loadLogs());
 // ---------- Templates ----------
 
 async function loadTemplates() {
-  templates = await admin.templates();
+  const isLatest = templatesRequest();
+  const latest = await admin.templates();
+  if (!isLatest()) return;
+  templates = latest;
   renderTable($("template-table"), ["Name", "Version", "Status", "Created", "Notes", ""], templates.map((t) =>
     el("tr", { class: "clickable", onclick: () => editTemplate(t) },
       el("td", {}, t.name),
@@ -157,7 +172,9 @@ $("tpl-preview").addEventListener("click", async () => {
 // ---------- Failures ----------
 
 async function loadFailures(page = 1) {
+  const isLatest = failuresRequest();
   const data = await admin.failures({ page });
+  if (!isLatest()) return;
   renderTable($("failure-table"), ["Report", "Time", "Query", "Model", "Status", "Reason", ""], data.items.map((r) =>
     el("tr", {},
       el("td", {}, `#${r.id}`),
@@ -192,7 +209,9 @@ $("failure-refresh").addEventListener("click", () => loadFailures());
 // ---------- Feedback ----------
 
 async function loadFeedback(page = 1) {
+  const isLatest = feedbackRequest();
   const data = await admin.feedback({ page, max_rating: $("feedback-max").value });
+  if (!isLatest()) return;
   renderTable($("feedback-table"), ["Time", "Query", "Model", "Rating", "Comments", "Suggestions"], data.items.map((f) =>
     el("tr", {},
       el("td", {}, formatDate(f.created_at)),
@@ -209,7 +228,9 @@ $("feedback-max").addEventListener("change", () => loadFeedback());
 // ---------- Stats ----------
 
 async function loadStats() {
+  const isLatest = statsRequest();
   const s = await admin.stats();
+  if (!isLatest()) return;
   const stat = (label, value, sub = "") =>
     el("div", { class: "stat" }, el("div", { class: "muted small" }, label), el("div", { class: "num" }, value), sub && el("div", { class: "small muted" }, sub));
   $("stats").replaceChildren(

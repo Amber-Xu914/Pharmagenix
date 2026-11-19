@@ -96,8 +96,9 @@ but results are noticeably better with it.
 so it is always current: DGIdb interactions and ClinPGx clinical annotations. Data that is needed for name
 normalisation, has no usable API, or is joined across sources (gene → guideline → label → PBS; diplotype →
 phenotype → recommendation → alert) is kept locally and versioned: HGNC, ChEMBL, CPIC, the ClinPGx guidelines and
-labels, the FDA table and PBS. The new tables (CPIC's supporting tables, ClinPGx, DGIdb categories, FDA) are not read
-by the evidence stage yet; they are there for the guideline-check step. DGIdb's `latest` download is the June 2024
+labels, the FDA table and PBS. CPIC's diplotype and gene-result tables turn the patient genotypes entered in the
+search form into phenotypes and the matching CPIC recommendations (`services/genotypes.py`); the other supporting
+tables (allele frequencies, CDS alerts, ClinPGx labels) are not read by the evidence stage yet. DGIdb's `latest` download is the June 2024
 release.
 
 If you imported an earlier version of this branch, drop the tables that are now queried live:

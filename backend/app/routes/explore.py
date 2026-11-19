@@ -13,6 +13,7 @@ from ..services.explorer import run_exploration
 from ..services.vcf_explorer import run_vcf_followup
 from ..services.llm import provider_info
 from ..services.report_docx import DOCX_MIME, MAX_FIGURE_BYTES, build_report
+from ..services.genotypes import parse_genotypes
 from ..services.safety import parse_medications
 from ..services.relations import DEFAULT_RELATION_TYPES, RELATION_TYPES
 
@@ -42,7 +43,9 @@ def meta():
 @bp.post("/explore")
 def explore():
     """{"gene": "CYP2C19"} (gene -> drugs) or {"entity_type": "drug", "drug": "clopidogrel"} (drug -> genes).
-    Optional "medications": the patient's current medications, checked for drug–drug interactions."""
+    Optional "medications": the patient's current medications, checked for drug–drug interactions.
+    Optional "genotypes": the patient's pharmacogene results ("CYP2C19 *2/*2; HLA-B*57:01 negative" or a list),
+    turned into CPIC phenotypes and recommendations."""
     body = request.get_json(silent=True) or {}
     entity_type = body.get("entity_type") or "gene"
     query = run_exploration(
@@ -53,6 +56,7 @@ def explore():
         confirm_unresolved=bool(body.get("confirm_unresolved")),
         entity_type=entity_type,
         medications=parse_medications(body.get("medications")),
+        genotypes=parse_genotypes(body.get("genotypes")),
     )
     return _query_response(query, 201)
 

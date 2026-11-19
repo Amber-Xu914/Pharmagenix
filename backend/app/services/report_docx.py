@@ -458,10 +458,21 @@ def reference_text(item):
             if g("label_title") else ""
         return (f"Drug–drug interaction check ({g('rule')}): {g('drug')} with {g('other')}, {g('severity')}."
                 f"{label} Source: {g('source')}.")
+    if k == "genotype":
+        return (f"Clinical Pharmacogenetics Implementation Consortium. {g('guideline_name') or 'CPIC guideline'}: "
+                f"recommendation for {_name(g('drug'))} in {g('phenotype')} ({_pop(item)}; classification "
+                f"{g('classification') or '–'}), matched to the patient's {g('genotype')}. {g('release') or 'CPIC'}.")
     if k == "oncokb":
         drugs = ", ".join(g("drugs") or g("therapies") or [])
         return f"OncoKB: {g('gene') or ''} {g('alteration') or ''} and {drugs}; level {g('level')}. OncoKB.".replace("  ", " ")
     return f"{g('source') or 'Evidence'} record {g('id')}."
+
+
+def _pop(rec):
+    """A genotype recommendation's population in plain words (items saved before the labels: the CPIC code)."""
+    from .genotypes import population_label
+    return (rec.get("population_label") if "population_label" in rec else population_label(rec.get("population"))) \
+        or "All patients"
 
 
 def _name(name):
@@ -1433,6 +1444,14 @@ def build_dgi(b):
     safety = ev.get("safety") or {}
     alerts = safety.get("interactions") or []
     meds = [m["name"] for m in safety.get("medications") or []]
+    geno = ev.get("genotypes") or {}
+    geno_entered = geno.get("entered") or []
+    by_id = {i.get("id"): i for i in items}
+    geno_recs = [by_id[e] for e in geno.get("recommendations") or [] if e in by_id]
+    geno_brief = []  # one per drug (the strongest; recommendations are sorted Strong first) for page 1
+    for r in geno_recs:
+        if r["drug"] not in {x["drug"] for x in geno_brief} and r.get("classification") != "No Recommendation":
+            geno_brief.append(r)
     rel = q.get("relation_types") or []
     all_types = set(rel) >= set(DEFAULT_RELATION_TYPES)
     rel_text = "all relationship types" if all_types else _and([x.lower() for x in labels(rel)])
@@ -1466,6 +1485,9 @@ def build_dgi(b):
          ("Resolved as", f"{name} ({norm.get('id') or 'unresolved'}; {norm.get('matched_by') or 'searched as typed'})",
           "Relationship types", rel_text[:1].upper() + rel_text[1:]),
          ("Profile", profile_text, "Current medications", ", ".join(meds) or "None given"),
+         *([("Patient genotypes", "; ".join(f"{x['input']} → {x.get('phenotype') or 'not interpreted'}"
+                                            for x in geno_entered), "Genotype source", "Entered by the user")]
+           if geno_entered else []),
          ("Sources enabled", ", ".join(on) or "–", "Not enabled", ", ".join(off) or "–"),
          ("Reviewed / authorised by", "______________________", "Signature / date", "______________________")])
     b.brief_results([
@@ -1473,6 +1495,14 @@ def build_dgi(b):
                                              for r in strongest) or "No pair graded strong or moderate."),
         ("Prescribing guidance", f"CPIC level A/B guidelines for {_and(cpic_ab)}." if cpic_ab
          else "No CPIC level A/B guideline."),
+        *([("Patient genotype", _inline("; ".join(
+            f"{_name(r['drug'])}: {r.get('short_recommendation')} ({r['phenotype']}; CPIC "
+            f"{(r.get('classification') or '').lower()}"
+            f"{', ' + _pop(r) if _pop(r) != 'All patients' else ''}) [{r['id']}]"
+            for r in geno_brief[:4]) + (f"; all {len(geno_recs)} recommendations in Section 3.4."
+                                        if len(geno_recs) > len(geno_brief[:4]) else ""),
+            b.refs) if geno_brief else "No CPIC recommendation applies to the drugs found for the genotypes entered.")]
+          if geno_entered else []),
         ("Pharmacogenomic annotations", f"{len(annotations)} PharmGKB clinical annotations ({len(top_annotations)} at "
                                         f"level 1A/1B)." if annotations else "None retrieved."),
         ("Drug interactions and warnings",
@@ -1482,8 +1512,8 @@ def build_dgi(b):
              f"{len(warned)} drug(s) with a ChEMBL warning" if warned else None])) + "."),
         ("Australian availability", f"{sum(1 for a in pbs if a.get('pbs_listed'))} of {len(pbs)} drugs checked are "
                                     "PBS-listed (Section 3.6)." if pbs else "PBS not checked."),
-        ("Not covered by this search", "Dose calculation, patient genotypes and pharmacodynamic interactions; live "
-                                       "sources reflect the time of the search."),
+        ("Not covered by this search", ("Dose calculation" if geno_entered else "Dose calculation, patient genotypes")
+                                       + " and pharmacodynamic interactions; live sources reflect the time of the search."),
     ], note="All rows are rule-based summaries of Section 3.")
 
     # ----- abstract -----
@@ -1634,6 +1664,17 @@ def build_dgi(b):
         b.p("No pair was graded above limited.")
 
     b.h2("3.4 Pharmacogenomic evidence")
+    if geno_entered:
+        b.p("Patient genotypes entered: " + "; ".join(
+            f"{x['input']} → {x.get('phenotype') or 'not interpreted (' + (x.get('note') or x['status']) + ')'}"
+            + "".join(f" ({n})" for n in x.get("phenoconversion") or []) for x in geno_entered) + ".")
+        if geno_recs:
+            n = b.table("CPIC recommendations for the patient's genotypes.",
+                        ["Drug", "Phenotype", "Population", "Recommendation", "Strength", "Ref"],
+                        [[_name(r["drug"]), r["phenotype"], _pop(r), r.get("recommendation"),
+                          r.get("classification"), b.refs.cell([r["id"]])] for r in geno_recs],
+                        [1.4, 1.8, 1.2, 3.6, 1.0, 0.8])
+            b.p(f"Recommendations matched exactly to the patient's CPIC phenotype are given in Table {n}.")
     if guidelines:
         n = b.table("CPIC prescribing guidelines.", ["Gene–drug pair", "CPIC level", "PharmGKB level", "Guideline", "Ref"],
                     [[f"{g.get('gene')}–{g.get('drug')}", g.get("cpic_level"), g.get("clinpgx_level"),

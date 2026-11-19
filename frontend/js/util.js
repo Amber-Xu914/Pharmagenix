@@ -66,6 +66,8 @@ export function describeEvidence(item) {
       return `Patient variant · ${item.notation}${item.hgvsc ? ` (${item.hgvsc})` : ""}`;
     case "civic":
       return `CIViC EID${item.evidence_id} · ${item.molecular_profile} – ${item.therapies.join(", ")} (${item.significance}; level ${item.level}; ${item.disease})`;
+    case "genotype":
+      return `CPIC · ${item.genotype} → ${item.phenotype}: ${item.drug} (${item.classification || "n/a"}${(item.population_label ?? (item.population === "general" ? "" : item.population)) ? `; ${item.population_label ?? item.population}` : ""})`;
     case "oncokb":
       return `OncoKB · ${item.gene} ${item.protein_change} – ${item.drug} (${item.level})`;
     case "profile":
@@ -111,4 +113,29 @@ export function labelTableCells(root = document.body) {
     }
     tables.forEach(label);
   }).observe(root, { childList: true, subtree: true });
+}
+
+/**
+ * Guard against overlapping requests showing stale data: call the returned function when a request starts; it
+ * gives back isLatest(), which is false once a newer request has started (e.g. the user clicked another row).
+ *   const logRequest = latestOnly();
+ *   const isLatest = logRequest(); const data = await api.x(); if (!isLatest()) return;
+ */
+export function latestOnly() {
+  let latest = 0;
+  return () => {
+    const ticket = ++latest;
+    return () => ticket === latest;
+  };
+}
+
+/** "Copy link": the ?q= address of the current result. */
+export async function copyLink(status) {
+  const url = `${location.origin}${location.pathname}${location.search}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    status.textContent = "Link copied";
+  } catch {
+    status.textContent = url; // clipboard blocked (e.g. not https): show it to copy by hand
+  }
 }
