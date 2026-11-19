@@ -131,6 +131,16 @@ The results appear at the top of **Pharmacogenomics**, in **At a glance**, in th
 evidence) and in the Word report (page 1 and Section 3.4). Try it: search **clopidogrel** with genotype
 `CYP2C19 *2/*2` and current medication `omeprazole`.
 
+## 🗂 Result tabs: Clinical, Extra, Export
+
+Every result opens on **Clinical**, the view for a clinic visit: At a glance, the AI summary's first paragraph, the
+patient-genotype recommendations and drug safety (for a VCF: the Clinical summary, the established treatment options
+and drug safety). **Extra** holds everything else: the workflow trace, the full AI report with follow-up questions,
+the profile, the interaction table and network, pharmacogenomic evidence, literature and PBS details (for a VCF: the
+Analysis agent, exploratory predictions, co-mutations, network, appendix, limitations and ISM heatmap). **Export** has
+the Word report, the CSV of the interaction table and a link to the result. Clicking a citation such as [E12] in the
+Clinical view opens Extra at that evidence.
+
 ## ⚡ At a glance
 
 Above the AI summary, a short rule-based box (not written by the AI) gives one line per decision: the genotype

@@ -67,7 +67,7 @@ export function describeEvidence(item) {
     case "civic":
       return `CIViC EID${item.evidence_id} · ${item.molecular_profile} – ${item.therapies.join(", ")} (${item.significance}; level ${item.level}; ${item.disease})`;
     case "genotype":
-      return `CPIC · ${item.genotype} → ${item.phenotype}: ${item.drug} (${item.classification || "n/a"}${item.population && item.population !== "general" ? `; ${item.population}` : ""})`;
+      return `CPIC · ${item.genotype} → ${item.phenotype}: ${item.drug} (${item.classification || "n/a"}${(item.population_label ?? (item.population === "general" ? "" : item.population)) ? `; ${item.population_label ?? item.population}` : ""})`;
     case "oncokb":
       return `OncoKB · ${item.gene} ${item.protein_change} – ${item.drug} (${item.level})`;
     case "profile":
@@ -127,4 +127,15 @@ export function latestOnly() {
     const ticket = ++latest;
     return () => ticket === latest;
   };
+}
+
+/** "Copy link": the ?q= address of the current result. */
+export async function copyLink(status) {
+  const url = `${location.origin}${location.pathname}${location.search}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    status.textContent = "Link copied";
+  } catch {
+    status.textContent = url; // clipboard blocked (e.g. not https): show it to copy by hand
+  }
 }

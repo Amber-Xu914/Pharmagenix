@@ -260,7 +260,7 @@ def format_evidence_item(item):
     if kind == "genotype":
         implications = "; ".join(f"{g}: {t}" for g, t in (item.get("implications") or {}).items())
         return (f"[{item['id']}] Patient genotype → CPIC recommendation | {item['drug']} | patient: "
-                f"{item['genotype']} → {item['phenotype']} | population: {item['population']} | implication: "
+                f"{item['genotype']} → {item['phenotype']} | population: {item.get('population_label') or 'all patients'} | implication: "
                 f"{implications[:400] or 'n/a'} | recommendation: {(item.get('recommendation') or 'n/a')[:600]} | "
                 f"classification: {item.get('classification') or 'n/a'} | CPIC level {item.get('cpic_level') or 'n/a'}")
     if kind == "oncokb":

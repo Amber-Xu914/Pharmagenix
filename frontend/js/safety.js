@@ -48,7 +48,7 @@ function alertRow(a, items) {
  * box: the section body. safety: evidence.safety. warned: [{drug, warnings}] drugs with ChEMBL warnings.
  * regimens: true for the VCF view (combination regimens are always checked).
  */
-export function renderSafety(box, evidence, { warned = [], regimens = false, formHint = "" } = {}) {
+export function renderSafety(box, evidence, { warned = [], regimens = false, formHint = "", focus = null } = {}) {
   const safety = evidence.safety;
   box.replaceChildren();
   if (!safety) {
@@ -63,10 +63,26 @@ export function renderSafety(box, evidence, { warned = [], regimens = false, for
        el("strong", {}, meds.map((m) => m.name).join(", ")), regimens ? "; and each combination regimen internally." : "."]
     : [regimens ? "Combination regimens were checked internally. " : "",
        el("span", { class: "muted" }, `No current medications were entered${formHint ? `: ${formHint}` : ""}.`)]));
-  if (alerts.length) {
-    box.append(el("div", { class: "table-wrap" }, el("table", { class: "safety-table" },
-      el("thead", {}, el("tr", {}, ["Severity", "Drugs", "Finding", "Source", "Ref"].map((h) => el("th", {}, h)))),
-      el("tbody", {}, alerts.map((a) => alertRow(a, items))))));
+  let shown = alerts.length;
+  const table = (rows) => el("div", { class: "table-wrap" }, el("table", { class: "safety-table" },
+    el("thead", {}, el("tr", {}, ["Severity", "Drugs", "Finding", "Source", "Ref"].map((h) => el("th", {}, h)))),
+    el("tbody", {}, rows.map((a) => alertRow(a, items)))));
+  if (alerts.length && focus) {
+    // Clinical view: the interactions of the drugs being considered first; the rest folded away.
+    const names = new Set(focus.flatMap((d) => d.split(" + ")).map((d) => d.trim().toLowerCase()));
+    const involves = (a) => names.has((a.drug || "").toLowerCase()) || names.has((a.other || "").toLowerCase());
+    const mine = alerts.filter(involves);
+    const rest = alerts.filter((a) => !involves(a));
+    shown = mine.length;
+    box.append(mine.length ? table(mine) : el("p", { class: "muted" },
+      "No interaction was found for the treatment options above."));
+    if (rest.length) {
+      box.append(el("details", { class: "more-alerts" },
+        el("summary", { class: "small" }, `${rest.length} more interaction${rest.length === 1 ? "" : "s"} with other candidate drugs`),
+        table(rest)));
+    }
+  } else if (alerts.length) {
+    box.append(table(alerts));
   } else if (meds.length || regimens) {
     box.append(el("p", { class: "muted" }, "No pharmacokinetic interaction was found by the checks."));
   }
@@ -77,7 +93,7 @@ export function renderSafety(box, evidence, { warned = [], regimens = false, for
   box.append(el("p", { class: "muted small" }, "Rules: the drug's FDA label (openFDA) and the FDA table of CYP / "
     + "transporter inhibitors, inducers and substrates; phenoconversion when a co-medication strongly inhibits a gene "
     + "the drug has a CPIC guideline for. Pharmacokinetic interactions only; not a complete interaction check."));
-  return alerts.length;
+  return shown;
 }
 
 /** Short markers for a table row or candidate: warnings and the worst interaction. */

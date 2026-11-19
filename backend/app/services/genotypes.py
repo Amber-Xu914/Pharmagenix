@@ -34,6 +34,24 @@ PHENOTYPE_ABBREVIATIONS = {
 NO_RESULT = {"no result", "indeterminate"}
 ENTRY = re.compile(r"^\s*(?P<gene>[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)?)\s*(?P<value>[*:\s].*)$")
 CLASSIFICATION_ORDER = {"Strong": 0, "Moderate": 1, "Optional": 2}
+# CPIC's population codes, written out for clinicians ("" = applies to everyone).
+POPULATION_LABELS = {
+    "general": "", "adults": "Adults", "pediatrics": "Children",
+    "child >40kg_adult": "Children over 40 kg and adults", "<= 1g per day": "Dose of 1 g per day or less",
+    "CVI ACS PCI": "Cardiovascular: acute coronary syndrome and/or PCI",
+    "CVI non-ACS non-PCI": "Cardiovascular: no acute coronary syndrome or PCI",
+    "NVI": "Neurovascular: stroke or TIA",
+    "CBZ naive": "Not yet taking carbamazepine", "CBZ-no alternatives": "Carbamazepine with no alternative",
+    "CBZ use >3mos": "Taking carbamazepine for over 3 months",
+    "OXC naive": "Not yet taking oxcarbazepine", "OXC use >3 mos": "Taking oxcarbazepine for over 3 months",
+    "PHT naive": "Not yet taking phenytoin", "PHT use >3mos": "Taking phenytoin for over 3 months",
+}
+
+
+def population_label(population):
+    """CPIC's population code in plain words; unknown codes are shown as they are."""
+    code = (population or "general").strip()
+    return POPULATION_LABELS.get(code, code)
 
 
 # ---------- input ----------
@@ -212,7 +230,7 @@ def recommendations(resolved, drugs, release=None):
                 "gene": " + ".join(genes), "genes": genes, "drug": pair.drug_name.upper(),
                 "genotype": "; ".join(by_patient[g]["input"] for g in genes),
                 "phenotype": "; ".join(phenotype_label(g, keys[g]) for g in genes),
-                "lookup": rec.lookup, "population": population,
+                "lookup": rec.lookup, "population": population, "population_label": population_label(population),
                 "implications": rec.implications or {}, "recommendation": rec.recommendation,
                 "short_recommendation": _first_sentence(rec.recommendation),
                 "classification": rec.classification, "cpic_level": pair.cpic_level,

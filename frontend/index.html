@@ -106,15 +106,18 @@
             <button type="button" class="example" data-name="warfarin">warfarin</button>
           </div>
 
-          <fieldset class="relations">
-            <legend>Relationship types</legend>
-            <div id="relation-types" class="chips"></div>
-          </fieldset>
-
           <label class="meds-field small">Current medications <span class="muted">(optional, comma-separated: checked for drug–drug interactions)</span>
             <input id="medications" type="text" autocomplete="off" placeholder="e.g. omeprazole, fluoxetine"></label>
           <label class="meds-field small">Patient genotypes <span class="muted">(optional, separated by “;”: turned into CPIC phenotypes and dosing recommendations)</span>
             <input id="genotypes" type="text" autocomplete="off" placeholder="e.g. CYP2C19 *2/*2; CYP2D6 poor metabolizer; HLA-B*57:01 negative"></label>
+
+          <details class="advanced small">
+            <summary>Advanced: relationship types <span id="relation-summary" class="muted"></span></summary>
+            <fieldset class="relations">
+              <legend>Relationship types</legend>
+              <div id="relation-types" class="chips"></div>
+            </fieldset>
+          </details>
 
           <div class="options small">
             <label class="chip"><input id="compare" type="checkbox"> <span id="compare-label" class="compare-label">Generate comparison report</span></label>
@@ -187,30 +190,51 @@
     <!-- Gene header: what was searched, key identifiers and headline counts (js/profile.js) -->
     <header id="entity-header" class="entity-header card"></header>
 
-    <!-- What each workflow stage did for this query (js/workflow.js) -->
-    <section id="workflow-trace" class="card workflow-card hidden" aria-label="Workflow stages"></section>
-
+    <!-- Clinical: what a clinic visit needs. Extra: the full evidence. Export: downloads (js/tabs.js) -->
     <nav id="section-nav" class="section-nav" aria-label="Result sections">
-      <a href="#sec-overview">Overview</a>
-      <a href="#sec-profile">Profile</a>
-      <a href="#sec-interactions">Drug–gene interactions <span class="count" data-count="interactions"></span></a>
-      <a href="#sec-pgx">Pharmacogenomics <span class="count" data-count="pgx"></span></a>
-      <a href="#sec-safety">Drug safety <span class="count" data-count="safety"></span></a>
-      <a href="#sec-literature">Literature <span class="count" data-count="literature"></span></a>
-      <a href="#sec-pbs">Australian availability <span class="count" data-count="pbs"></span></a>
+      <div class="result-tabs" role="tablist" aria-label="Result view">
+        <button type="button" role="tab" data-tab="clinical">Clinical</button>
+        <button type="button" role="tab" data-tab="extra">Extra</button>
+        <button type="button" role="tab" data-tab="export">Export</button>
+      </div>
+      <a href="#sec-overview" data-in="clinical">Summary</a>
+      <a href="#sec-genotype" data-in="clinical" class="genotype-link hidden">Patient genotype <span class="count" data-count="genotype"></span></a>
+      <a href="#sec-safety" data-in="clinical">Drug safety <span class="count" data-count="safety"></span></a>
+      <a href="#workflow-trace" data-in="extra">Workflow</a>
+      <a href="#sec-report" data-in="extra">Full AI report</a>
+      <a href="#sec-profile" data-in="extra">Profile</a>
+      <a href="#sec-interactions" data-in="extra">Drug–gene interactions <span class="count" data-count="interactions"></span></a>
+      <a href="#sec-pgx" data-in="extra">Pharmacogenomics <span class="count" data-count="pgx"></span></a>
+      <a href="#sec-literature" data-in="extra">Literature <span class="count" data-count="literature"></span></a>
+      <a href="#sec-pbs" data-in="extra">Australian availability <span class="count" data-count="pbs"></span></a>
     </nav>
 
-    <!-- AI answer first; the structured data it cites follows -->
-    <section id="sec-overview" class="card section ai-card">
-      <div class="report-actions">
-        <button id="report-docx" class="secondary small" type="button">Download report (.docx)</button>
-        <span id="report-docx-status" class="small muted" role="status"></span>
-      </div>
+    <!-- ===== Clinical ===== -->
+    <section id="sec-overview" class="card section ai-card" data-in="clinical">
       <!-- Rule-based "at a glance" lines and "no known interaction" verdict; not written by the AI -->
       <div id="glance"></div>
       <div id="verdict"></div>
       <div id="reports"></div>
+      <p class="muted small more-note">The full AI report, follow-up questions, evidence tables, network and literature are
+        under <a href="#sec-report">Extra</a>; the Word report and CSV under <a href="#sec-export">Export</a>.</p>
+    </section>
 
+    <section id="sec-genotype" class="card section hidden" data-in="clinical">
+      <div class="section-head"><h2>Patient genotype → CPIC recommendation</h2></div>
+      <div id="genotypes-result"></div>
+    </section>
+
+    <section id="sec-safety" class="card section" data-in="clinical">
+      <div class="section-head"><h2>Drug safety: interactions and warnings</h2></div>
+      <div id="safety"></div>
+    </section>
+
+    <!-- ===== Extra ===== -->
+    <!-- What each workflow stage did for this query (js/workflow.js) -->
+    <section id="workflow-trace" class="card workflow-card section hidden" aria-label="Workflow stages" data-in="extra"></section>
+
+    <section id="sec-report" class="card section ai-card" data-in="extra">
+      <div id="reports-full"></div>
       <details class="ask">
         <summary>Ask a follow-up or regenerate</summary>
         <form id="ask-form" class="stack">
@@ -224,12 +248,12 @@
       </details>
     </section>
 
-    <section id="sec-profile" class="card section">
+    <section id="sec-profile" class="card section" data-in="extra">
       <div class="section-head"><h2 id="profile-title">Gene profile</h2></div>
       <div id="profiles"></div>
     </section>
 
-    <section id="sec-interactions" class="card section">
+    <section id="sec-interactions" class="card section" data-in="extra">
       <div class="section-head">
         <h2>Drug–gene interactions</h2>
         <div class="segmented" role="tablist" aria-label="View">
@@ -266,55 +290,96 @@
       </div>
     </section>
 
-    <section id="sec-pgx" class="card section">
+    <section id="sec-pgx" class="card section" data-in="extra">
       <div class="section-head"><h2>Pharmacogenomics</h2></div>
-      <div id="genotypes-result"></div>
       <div id="pgx"></div>
     </section>
 
-    <section id="sec-literature" class="card section">
+    <section id="sec-literature" class="card section" data-in="extra">
       <div class="section-head"><h2>Literature</h2></div>
       <div id="literature"></div>
     </section>
 
     <!-- Australian context: PBS listing (not DGI evidence) -->
-    <section id="sec-safety" class="card section">
-      <div class="section-head"><h2>Drug safety: interactions and warnings</h2></div>
-      <div id="safety"></div>
-    </section>
-
-    <section id="sec-pbs" class="card section">
+    <section id="sec-pbs" class="card section" data-in="extra">
       <div class="section-head"><h2>Australian availability (PBS)</h2></div>
       <div id="availability"></div>
+    </section>
+
+    <!-- ===== Export ===== -->
+    <section id="sec-export" class="card section" data-in="export">
+      <div class="section-head"><h2>Export</h2></div>
+      <div class="export-list">
+        <div class="export-item">
+          <div><strong>Word report (.docx)</strong>
+            <p class="muted small">Page 1 brief results, abstract, methods, results tables, network figure, the AI
+              discussion and numbered references. For the medical record or a meeting.</p></div>
+          <div class="export-action"><button id="report-docx" type="button">Download report</button>
+            <span id="report-docx-status" class="small muted" role="status"></span></div>
+        </div>
+        <div class="export-item">
+          <div><strong>Interaction table (.csv)</strong>
+            <p class="muted small">Every graded drug–gene pair with its evidence, for a spreadsheet.</p></div>
+          <div class="export-action"><button id="export-csv-tab" class="secondary" type="button">Download CSV</button></div>
+        </div>
+        <div class="export-item">
+          <div><strong>Link to this result</strong>
+            <p class="muted small">Opens this query again (the evidence is stored; nothing is re-run).</p></div>
+          <div class="export-action"><button id="copy-link" class="secondary" type="button">Copy link</button>
+            <span id="copy-link-status" class="small muted" role="status"></span></div>
+        </div>
+      </div>
     </section>
   </main>
 
   <!-- Workflow 4 results (js/vcf.js) -->
   <main id="vcf-results" class="container results hidden">
     <header id="vcf-header" class="entity-header card"></header>
-    <section id="vcf-trace" class="card workflow-card" aria-label="Workflow stages"></section>
-
     <nav class="section-nav" aria-label="Result sections">
-      <a href="#vcf-sec-overview">Overview</a>
-      <a href="#vcf-sec-established">A. Established <span class="count" id="vcf-count-established"></span></a>
-      <a href="#vcf-sec-exploratory">B. Exploratory <span class="count" id="vcf-count-exploratory"></span></a>
-      <a href="#vcf-sec-comutations">Co-mutations</a>
-      <a href="#vcf-sec-safety">Drug safety <span class="count" id="vcf-count-safety"></span></a>
-      <a href="#vcf-sec-network">Variant–drug network</a>
-      <a href="#vcf-sec-appendix">Appendix</a>
-      <a href="#vcf-sec-limits">Limitations</a>
-      <a href="#vcf-sec-ism">ISM heatmap</a>
+      <div class="result-tabs" role="tablist" aria-label="Result view">
+        <button type="button" role="tab" data-tab="clinical">Clinical</button>
+        <button type="button" role="tab" data-tab="extra">Extra</button>
+        <button type="button" role="tab" data-tab="export">Export</button>
+      </div>
+      <a href="#vcf-sec-overview" data-in="clinical">Summary</a>
+      <a href="#vcf-sec-established" data-in="clinical">Treatment options <span class="count" id="vcf-count-established"></span></a>
+      <a href="#vcf-sec-safety" data-in="clinical">Drug safety <span class="count" id="vcf-count-safety"></span></a>
+      <a href="#vcf-trace" data-in="extra">Workflow</a>
+      <a href="#vcf-sec-analysis" data-in="extra">Analysis agent</a>
+      <a href="#vcf-sec-exploratory" data-in="extra">B. Exploratory <span class="count" id="vcf-count-exploratory"></span></a>
+      <a href="#vcf-sec-comutations" data-in="extra">Co-mutations</a>
+      <a href="#vcf-sec-network" data-in="extra">Variant–drug network</a>
+      <a href="#vcf-sec-appendix" data-in="extra">Appendix</a>
+      <a href="#vcf-sec-limits" data-in="extra">Limitations</a>
+      <a href="#vcf-sec-ism" data-in="extra">ISM heatmap</a>
     </nav>
 
-    <section id="vcf-sec-overview" class="card section ai-card">
-      <div class="report-actions">
-        <button id="vcf-report-docx" class="secondary small" type="button">Download report (.docx)</button>
-        <span id="vcf-report-docx-status" class="small muted" role="status"></span>
-      </div>
+    <!-- ===== Clinical ===== -->
+    <section id="vcf-sec-overview" class="card section ai-card" data-in="clinical">
       <div id="vcf-glance"></div>
       <div id="vcf-verdict"></div>
-      <div id="vcf-reports"></div>
       <div id="vcf-clinical"></div>
+      <p class="muted small more-note">The Analysis agent's full report, exploratory predictions, network, appendix and ISM
+        heatmap are under <a href="#vcf-sec-analysis">Extra</a>; the Word report under <a href="#vcf-sec-export">Export</a>.</p>
+    </section>
+
+    <section id="vcf-sec-established" class="card section track-a" data-in="clinical">
+      <div class="section-head"><h2>A. Established clinical evidence</h2>
+        <span class="muted small">CIViC level A/B (OncoKB 1–2) in this cancer subtype, validated by the evidence tool</span></div>
+      <div id="vcf-established"></div>
+    </section>
+
+    <section id="vcf-sec-safety" class="card section" data-in="clinical">
+      <div class="section-head"><h2>Drug safety: interactions and warnings</h2>
+        <span class="muted small">Flagged, not scored: change the co-medication or adjust the dose; withdrawn drugs are down-ranked</span></div>
+      <div id="vcf-safety"></div>
+    </section>
+
+    <!-- ===== Extra ===== -->
+    <section id="vcf-trace" class="card workflow-card section" aria-label="Workflow stages" data-in="extra"></section>
+
+    <section id="vcf-sec-analysis" class="card section ai-card" data-in="extra">
+      <div id="vcf-reports"></div>
       <details class="ask">
         <summary>Ask a follow-up or regenerate</summary>
         <form id="vcf-ask-form" class="stack">
@@ -328,31 +393,19 @@
       </details>
     </section>
 
-    <section id="vcf-sec-established" class="card section track-a">
-      <div class="section-head"><h2>A. Established clinical evidence</h2>
-        <span class="muted small">CIViC level A/B (OncoKB 1–2) in this cancer subtype, validated by the evidence tool</span></div>
-      <div id="vcf-established"></div>
-    </section>
-
-    <section id="vcf-sec-exploratory" class="card section track-b">
+    <section id="vcf-sec-exploratory" class="card section track-b" data-in="extra">
       <div class="section-head"><h2>B. Exploratory predictions</h2>
         <span class="muted small">Levels C–E, other cancer types, gene-level links, Tier 3 scores and agent hypotheses: not evidence of response</span></div>
       <div id="vcf-exploratory"></div>
       <div id="vcf-agents"></div>
     </section>
 
-    <section id="vcf-sec-comutations" class="card section">
+    <section id="vcf-sec-comutations" class="card section" data-in="extra">
       <div class="section-head"><h2>Co-mutations without a targeted drug</h2></div>
       <div id="vcf-comutations"></div>
     </section>
 
-    <section id="vcf-sec-safety" class="card section">
-      <div class="section-head"><h2>Drug safety: interactions and warnings</h2>
-        <span class="muted small">Flagged, not scored: change the co-medication or adjust the dose; withdrawn drugs are down-ranked</span></div>
-      <div id="vcf-safety"></div>
-    </section>
-
-    <section id="vcf-sec-network" class="card section">
+    <section id="vcf-sec-network" class="card section" data-in="extra">
       <div class="section-head"><h2>Variant–drug network</h2>
         <button id="vcf-network-fit" class="secondary small" type="button">Reset view</button></div>
       <div id="vcf-network-legend" class="legend"></div>
@@ -360,21 +413,41 @@
       <div id="vcf-network-info" class="network-info muted">Select a node or edge to view details.</div>
     </section>
 
-    <section id="vcf-sec-appendix" class="card section">
+    <section id="vcf-sec-appendix" class="card section" data-in="extra">
       <div class="section-head"><h2>Appendix</h2>
         <span class="muted small">All tiered, low-priority and QC-filtered variants with reasons; the full drug lists</span></div>
       <div id="vcf-appendix"></div>
     </section>
 
-    <section id="vcf-sec-limits" class="card section">
+    <section id="vcf-sec-limits" class="card section" data-in="extra">
       <div class="section-head"><h2>Limitations</h2></div>
       <div id="vcf-limits"></div>
     </section>
 
-    <section id="vcf-sec-ism" class="card section">
+    <section id="vcf-sec-ism" class="card section" data-in="extra">
       <div class="section-head"><h2>In-silico mutagenesis (AlphaGenome)</h2>
         <span class="muted small">Predicted effect of every single-base change around each variant that passed QC</span></div>
       <div id="vcf-ism"></div>
+    </section>
+
+    <!-- ===== Export ===== -->
+    <section id="vcf-sec-export" class="card section" data-in="export">
+      <div class="section-head"><h2>Export</h2></div>
+      <div class="export-list">
+        <div class="export-item">
+          <div><strong>Candidate Drug Report (.docx)</strong>
+            <p class="muted small">Page 1 brief results (clinical summary, options, interactions), then QC, tiers, both
+              ranked tracks, the network figure, the AI discussion and numbered references.</p></div>
+          <div class="export-action"><button id="vcf-report-docx" type="button">Download report</button>
+            <span id="vcf-report-docx-status" class="small muted" role="status"></span></div>
+        </div>
+        <div class="export-item">
+          <div><strong>Link to this result</strong>
+            <p class="muted small">Opens this analysis again (the evidence is stored; the VCF itself is not kept).</p></div>
+          <div class="export-action"><button id="vcf-copy-link" class="secondary" type="button">Copy link</button>
+            <span id="vcf-copy-link-status" class="small muted" role="status"></span></div>
+        </div>
+      </div>
     </section>
   </main>
 

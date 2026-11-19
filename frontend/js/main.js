@@ -8,8 +8,9 @@ import {
 import { downloadReport } from "./report.js";
 import { medicationList, renderSafety } from "./safety.js";
 import { renderReports } from "./summary.js";
+import { initTabs, revealTab, setTab } from "./tabs.js";
 import { DgiTable } from "./table.js";
-import { categoryColor, el, labelTableCells } from "./util.js";
+import { categoryColor, copyLink, el, labelTableCells } from "./util.js";
 import { initVcf, renderVcfQuery, vcfEvidenceTarget } from "./vcf.js";
 import { cacheNotice, renderProfiles, renderResolution, renderTrace, renderVerdict } from "./workflow.js";
 
@@ -63,6 +64,8 @@ async function init() {
   initVcf({ run: (task, message) => withBusy(message, task) });
   $("report-docx").addEventListener("click", () =>
     downloadReport(state.query, network, $("report-docx"), $("report-docx-status")));
+  $("export-csv-tab").addEventListener("click", () => table.exportCsv());
+  $("copy-link").addEventListener("click", () => copyLink($("copy-link-status")));
 
   const queryId = new URLSearchParams(location.search).get("q");
   if (queryId) {
@@ -81,6 +84,15 @@ function renderRelationChips() {
       el("input", { type: "checkbox", name: "relation", value: key, checked: selected.has(key) }),
       el("span", { class: "dot", style: `background:${categoryColor(key)}` }),
       label)));
+  $("relation-types").addEventListener("change", relationSummary);
+  relationSummary();
+}
+
+/** "(all 6)" / "(3 of 6)" next to the folded relationship types, so a narrowed search is not missed. */
+function relationSummary() {
+  const total = state.meta.relation_types.length;
+  const n = selectedRelations().length;
+  $("relation-summary").textContent = n === total ? `(all ${total})` : `(${n} of ${total} selected)`;
 }
 
 /** "Reference data last updated …", like Open Targets' "Last update"; the full versions are in the tooltip. */
@@ -144,6 +156,9 @@ function showQuery(query, { hash = "" } = {}) {
   const section = /^#(vcf-)?sec-/.test(hash) ? document.querySelector(hash) : null;
   history.replaceState(null, "", `?q=${query.id}${section ? hash : ""}`);
   const vcf = query.entity_type === "vcf";
+  const main = $(vcf ? "vcf-results" : "results");
+  if (section) revealTab(section);
+  else setTab(main, "clinical");
   $("results").classList.toggle("hidden", vcf);
   $("vcf-results").classList.toggle("hidden", !vcf);
   if (vcf) {
@@ -157,7 +172,8 @@ function showQuery(query, { hash = "" } = {}) {
   renderGlance($("glance"), query);
   renderVerdict($("verdict"), query);
   $("verdict").prepend(cacheNotice(evidence));
-  renderReports($("reports"), query, { alerts: () => renderAlerts(alerts) });
+  renderReports($("reports"), query, { roles: ["primary"], brief: "#sec-report" });
+  renderReports($("reports-full"), query, { title: "Full AI report", alerts: () => renderAlerts(alerts) });
 
   const numbers = headlineNumbers(evidence, query.entity_type);
   renderHeader($("entity-header"), { query, gene: queryGene(query), numbers });
@@ -171,17 +187,16 @@ function showQuery(query, { hash = "" } = {}) {
     availability: evidence.australian_availability,
   });
   state.networkStale = true;
-  if (state.view === "network") renderNetwork();
+  if (state.view === "network" && $("results").dataset.tab === "extra") renderNetwork();
 
   $("profile-title").textContent = query.entity_type === "drug" ? "Drug profile" : "Gene profile";
   renderProfiles($("profiles"), items);
   const relations = query.relation_types || [];
   const nGenotype = renderGenotypes($("genotypes-result"), evidence);
+  $("sec-genotype").classList.toggle("hidden", !evidence.genotypes);
+  document.querySelector(".genotype-link").classList.toggle("hidden", !evidence.genotypes);
+  document.querySelector('[data-count="genotype"]').textContent = nGenotype || "";
   renderPgx($("pgx"), items, { requested: !relations.length || relations.includes("snp") });
-  if (nGenotype) {
-    const pgxCount = document.querySelector('[data-count="pgx"]');
-    pgxCount.textContent = (Number(pgxCount.textContent) || 0) + nGenotype;
-  }
   renderLiterature($("literature"), items);
   renderAvailability($("availability"), evidence.australian_availability);
   const seen = new Set();
@@ -219,7 +234,8 @@ function revealEvidence(eid) {
   let target = null;
   if (state.query.entity_type === "vcf") {
     target = vcfEvidenceTarget(eid);
-  } else if (state.view === "network" && ["interaction", "mechanism"].includes(item.kind) && network.focusEvidence(eid)) {
+  } else if (state.view === "network" && ["interaction", "mechanism"].includes(item.kind)
+             && (setTab($("results"), "extra"), network.focusEvidence(eid))) {
     target = $("network");
   } else if (["interaction", "mechanism", "fda_cyp"].includes(item.kind)) {
     target = table.highlight(eid) || null;
@@ -230,6 +246,7 @@ function revealEvidence(eid) {
     if (item.url) window.open(item.url, "_blank", "noopener");
     return;
   }
+  revealTab(target); // the Clinical view cites rows that live under Extra
   for (let d = target.closest("details"); d; d = d.parentElement?.closest("details")) d.open = true; // folded sections
   document.querySelectorAll("#results .highlight").forEach((n) => n.classList.remove("highlight"));
   if (target !== $("network")) target.classList.add("highlight");
@@ -290,6 +307,13 @@ document.querySelectorAll("#sec-interactions [data-view]").forEach((b) =>
 
 document.addEventListener("evidence:focus", (event) => revealEvidence(event.detail));
 
+// Cytoscape can't lay out a hidden container: draw the network when the Extra tab is first shown.
+document.addEventListener("tab:change", ({ detail }) => {
+  if (detail.main.id === "results" && detail.tab === "extra" && state.view === "network" && state.networkStale) {
+    renderNetwork();
+  }
+});
+
 // Section nav: highlight the section currently in the middle of the screen.
 const navLinks = [...document.querySelectorAll("#section-nav a")];
 const spy = new IntersectionObserver((entries) => {
@@ -301,4 +325,5 @@ const spy = new IntersectionObserver((entries) => {
 document.querySelectorAll("#results .section").forEach((section) => spy.observe(section));
 
 labelTableCells();
+initTabs();
 init();

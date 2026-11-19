@@ -10,7 +10,7 @@ import { downloadReport } from "./report.js";
 import { medicationList, renderSafety, safetyMarkers } from "./safety.js";
 import { renderVcfGlance } from "./glance.js";
 import { renderReports } from "./summary.js";
-import { el, focusEvidence } from "./util.js";
+import { copyLink, el, focusEvidence } from "./util.js";
 import { SOURCE_NAMES, cacheNotice, renderTrace, sourcesChecked } from "./workflow.js";
 
 const $ = (id) => document.getElementById(id);
@@ -147,6 +147,11 @@ export async function initVcf({ run }) {
   $("vcf-network-fit").addEventListener("click", () => network.fit());
   $("vcf-report-docx").addEventListener("click", () => downloadReport(currentQuery, network, $("vcf-report-docx"),
     $("vcf-report-docx-status")));
+  $("vcf-copy-link").addEventListener("click", () => copyLink($("vcf-copy-link-status")));
+  // Cytoscape can't lay out a hidden container: draw the network when the Extra tab is shown.
+  document.addEventListener("tab:change", ({ detail }) => {
+    if (detail.main.id === "vcf-results" && detail.tab === "extra" && networkStale) drawNetwork();
+  });
 }
 
 /** The optional clinical-context fields: {stage, treatment, age, ...} with the empty ones left out. */
@@ -162,7 +167,13 @@ function clinicalContext() {
 function renderClinical(query) {
   const box = $("vcf-clinical");
   box.replaceChildren();
-  if (!query.reports.some((r) => r.role === "clinical")) return;
+  if (!query.reports.some((r) => r.role === "clinical")) {
+    if (query.evidence?.outcome?.status === "found") {
+      box.append(el("p", { class: "muted small" }, "No Clinical summary was generated for this query (run before the "
+        + "agent existed, or it failed). The Analysis agent's report is under ", el("a", { href: "#vcf-sec-analysis" }, "Extra"), "."));
+    }
+    return;
+  }
   const clinical = query.evidence?.input?.clinical || {};
   box.append(el("p", { class: "agent-note" }, "Clinical summary (AI): regimen options and monitoring for the treating "
     + "physician to weigh. [En] cites the evidence; [GK] marks general clinical knowledge that is not in the retrieved "
@@ -226,13 +237,16 @@ export function renderVcfQuery(query) {
   renderVerdict(evidence);
   renderReports($("vcf-reports"), query, { title: "Analysis agent" });
   renderClinical(query);
-  document.querySelector("#vcf-sec-overview .ask").classList.toggle("hidden", evidence.outcome?.status !== "found");
+  document.querySelector("#vcf-sec-analysis .ask").classList.toggle("hidden", evidence.outcome?.status !== "found");
   renderEstablished(evidence);
   renderExploratory(query, evidence);
   renderCoMutations(evidence);
   const candidates = [...(evidence.tracks?.established || []), ...(evidence.tracks?.exploratory || [])];
-  const warned = candidates.filter((c) => c.safety?.warnings?.length).map((c) => ({ drug: c.drug, warnings: c.safety.warnings }));
-  const nSafety = renderSafety($("vcf-safety"), evidence, { warned, regimens: true,
+  const options = (evidence.tracks?.established || []).filter((c) => c.top && !c.strong_resistance).map((c) => c.drug);
+  // Clinical view: warnings of the treatment options only (the full drug lists are in the Appendix).
+  const warned = candidates.filter((c) => options.includes(c.drug) && c.safety?.warnings?.length)
+    .map((c) => ({ drug: c.drug, warnings: c.safety.warnings }));
+  const nSafety = renderSafety($("vcf-safety"), evidence, { warned, regimens: true, focus: options,
     formHint: "enter the patient's medications in the form to check every candidate" });
   $("vcf-count-safety").textContent = nSafety + warned.length || "";
   renderAppendix(evidence);
@@ -241,8 +255,15 @@ export function renderVcfQuery(query) {
   const tracks = evidence.tracks || {};
   $("vcf-count-established").textContent = tracks.established?.length || "";
   $("vcf-count-exploratory").textContent = tracks.exploratory?.length || "";
-  // Cytoscape needs a visible container, so the network is drawn after the section is shown.
-  requestAnimationFrame(() => network.render(evidence.network, 0));
+  // Cytoscape needs a visible container: the network is drawn when the Extra tab is shown.
+  networkStale = true;
+  if ($("vcf-results").dataset.tab === "extra") requestAnimationFrame(drawNetwork);
+}
+
+let networkStale = true;
+function drawNetwork() {
+  network.render(currentQuery?.evidence?.network, 0);
+  networkStale = false;
 }
 
 function renderHeader(query, evidence) {
@@ -307,7 +328,7 @@ const MARKETED_TITLE = "ChEMBL max phase 4: approved by at least one regulator (
 const PBS_TITLE = "Matched by drug name on the current PBS Schedule. The restrictions are shown as published; "
   + "whether this patient meets them is not checked.";
 
-function candidateTable(rows, availability) {
+function candidateTable(rows, availability, { clinical = false } = {}) {
   const pbs = new Map((availability || []).map((a) => [a.drug.toUpperCase(), a]));
   return el("div", { class: "table-wrap" }, el("table", { class: "cand-table" },
     el("thead", {}, el("tr", {}, ["#", "Drug", "Target variant(s)", "Evidence", "Score", "Rationale", "Marketed / PBS", "Refs"]
@@ -321,8 +342,10 @@ function candidateTable(rows, availability) {
         el("td", {}, c.variants.join(", ") || "–"),
         el("td", {}, levelBadge(c), c.best ? el("div", { class: "muted small" },
           `${c.best.disease_match} · ${c.best.specificity} match · ${c.n_evidence} item${c.n_evidence === 1 ? "" : "s"}`) : ""),
-        el("td", {}, el("span", { class: "score" }, c.score),
-          el("ul", { class: "score-parts" }, (c.score_parts || []).map((p) => el("li", {}, `${p.points > 0 ? "+" : ""}${p.points} ${p.label}`)))),
+        el("td", {}, el("span", { class: "score" }, c.score), clinical
+          // Clinical view: the points behind the score are folded (the Appendix under Extra lists them open).
+          ? el("details", { class: "score-why small" }, el("summary", {}, "How scored"), scoreParts(c))
+          : scoreParts(c)),
         el("td", { class: "small" }, c.track_reason,
           (c.co_occurrence || []).map((n) => el("div", { class: "note-co" }, `↔ ${n}`)),
           (c.resistance_notes || []).slice(0, 3).map((n) => el("div", { class: "note-resist" }, `⚠ ${n}`)),
@@ -339,13 +362,17 @@ function candidateTable(rows, availability) {
     }))));
 }
 
+function scoreParts(c) {
+  return el("ul", { class: "score-parts" }, (c.score_parts || []).map((p) => el("li", {}, `${p.points > 0 ? "+" : ""}${p.points} ${p.label}`)));
+}
+
 function renderEstablished(evidence) {
   const rows = (evidence.tracks?.established || []).filter((c) => c.top);
   const avoid = evidence.resistance_only || [];
   const box = $("vcf-established");
   box.replaceChildren(
     evidence.outcome?.no_targeted_therapy ? el("p", { class: "no-tt" }, evidence.outcome.no_targeted_therapy) : "",
-    rows.length ? candidateTable(rows, evidence.australian_availability)
+    rows.length ? candidateTable(rows, evidence.australian_availability, { clinical: true })
       : el("p", { class: "muted" }, "No drug has level A/B (OncoKB 1–2) evidence for these variants in this cancer subtype."),
     avoid.length ? el("div", {},
       el("h3", { class: "sub-head" }, `Drugs to avoid: resistance evidence only (${avoid.length})`),

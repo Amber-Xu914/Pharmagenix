@@ -10,6 +10,12 @@ const CLASS_ORDER = { Strong: 0, Moderate: 1, Optional: 2 };
 const SEVERITY_ORDER = { major: 0, moderate: 1, minor: 2 };
 const titleCase = (s) => (s || "").toLowerCase().replace(/(^|[\s\-+/(])([a-z])/g, (m, p, c) => p + c.toUpperCase());
 
+/** CPIC's population in plain words ("" for everyone); items saved before the labels show CPIC's code. */
+function populationText(r) {
+  if ("population_label" in r) return r.population_label;
+  return r.population === "general" ? "" : r.population;
+}
+
 function refLink(eid) {
   return el("a", { class: "ref", href: "#", onclick: (e) => { e.preventDefault(); focusEvidence(eid); } }, eid);
 }
@@ -78,15 +84,15 @@ export function renderGlance(container, query) {
     const avoid = /\bavoid|not recommended|alternative|contraindicat/i.test(r.recommendation || "");
     lines.push(line(avoid ? "danger" : "info", "Genotype",
       el("strong", {}, `${titleCase(r.drug)}: `), `${r.short_recommendation} `,
-      el("span", { class: "muted" }, `(${r.phenotype}; CPIC ${r.classification.toLowerCase()}${r.population !== "general" ? `, ${r.population}` : ""})`),
+      el("span", { class: "muted" }, `(${r.phenotype}; CPIC ${r.classification.toLowerCase()}${populationText(r) ? `; ${populationText(r)}` : ""})`),
       ...refs([r.id])));
   }
-  if (recs.length > 3) lines.push(line("info", "", `${recs.length - 3} more genotype recommendations under Pharmacogenomics.`));
+  if (recs.length > 3) lines.push(line("info", "", `${recs.length - 3} more genotype recommendations under Patient genotype.`));
   if (genotypes && !recs.length) {
     const ok = (genotypes.entered || []).filter((g) => g.status === "ok");
     lines.push(line("info", "Genotype", ok.length
       ? `${ok.map((g) => `${g.gene} ${g.phenotype}`).join("; ")}: no CPIC recommendation for the drugs in this result.`
-      : "The genotypes entered could not be interpreted (see Pharmacogenomics)."));
+      : "The genotypes entered could not be interpreted (see Patient genotype)."));
   }
 
   // 2 The best-supported partners (drugs for a gene search, genes for a drug search), with PBS status.
@@ -185,7 +191,6 @@ export function renderGenotypes(container, evidence) {
   const items = new Map((evidence.items || []).map((i) => [i.id, i]));
   const recs = (block.recommendations || []).map((id) => items.get(id)).filter(Boolean);
   container.append(
-    el("h3", { class: "sub-head" }, "Patient genotype → CPIC recommendation"),
     el("ul", { class: "genotype-list small" }, (block.entered || []).map((g) => el("li", {},
       el("strong", {}, g.input), g.status === "ok"
         ? [" → ", el("span", { class: "level-badge tier-2" }, g.phenotype),
@@ -199,7 +204,7 @@ export function renderGenotypes(container, evidence) {
       el("tbody", {}, recs.map((r) => el("tr", { class: "ev-row", "data-eid": r.id },
         el("td", {}, el("strong", {}, titleCase(r.drug))),
         el("td", {}, r.phenotype),
-        el("td", { class: "small" }, r.population),
+        el("td", { class: "small" }, populationText(r) || "All patients"),
         el("td", { class: "small" }, r.recommendation,
           Object.keys(r.implications || {}).length
             ? el("div", { class: "muted" }, Object.entries(r.implications).map(([gene, t]) => `${gene}: ${t}`).join(" ")) : ""),

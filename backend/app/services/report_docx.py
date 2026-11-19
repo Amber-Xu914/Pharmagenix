@@ -460,12 +460,19 @@ def reference_text(item):
                 f"{label} Source: {g('source')}.")
     if k == "genotype":
         return (f"Clinical Pharmacogenetics Implementation Consortium. {g('guideline_name') or 'CPIC guideline'}: "
-                f"recommendation for {_name(g('drug'))} in {g('phenotype')} ({g('population')}; classification "
+                f"recommendation for {_name(g('drug'))} in {g('phenotype')} ({_pop(item)}; classification "
                 f"{g('classification') or '–'}), matched to the patient's {g('genotype')}. {g('release') or 'CPIC'}.")
     if k == "oncokb":
         drugs = ", ".join(g("drugs") or g("therapies") or [])
         return f"OncoKB: {g('gene') or ''} {g('alteration') or ''} and {drugs}; level {g('level')}. OncoKB.".replace("  ", " ")
     return f"{g('source') or 'Evidence'} record {g('id')}."
+
+
+def _pop(rec):
+    """A genotype recommendation's population in plain words (items saved before the labels: the CPIC code)."""
+    from .genotypes import population_label
+    return (rec.get("population_label") if "population_label" in rec else population_label(rec.get("population"))) \
+        or "All patients"
 
 
 def _name(name):
@@ -1491,7 +1498,7 @@ def build_dgi(b):
         *([("Patient genotype", _inline("; ".join(
             f"{_name(r['drug'])}: {r.get('short_recommendation')} ({r['phenotype']}; CPIC "
             f"{(r.get('classification') or '').lower()}"
-            f"{'' if r.get('population') == 'general' else ', ' + r['population']}) [{r['id']}]"
+            f"{', ' + _pop(r) if _pop(r) != 'All patients' else ''}) [{r['id']}]"
             for r in geno_brief[:4]) + (f"; all {len(geno_recs)} recommendations in Section 3.4."
                                         if len(geno_recs) > len(geno_brief[:4]) else ""),
             b.refs) if geno_brief else "No CPIC recommendation applies to the drugs found for the genotypes entered.")]
@@ -1664,7 +1671,7 @@ def build_dgi(b):
         if geno_recs:
             n = b.table("CPIC recommendations for the patient's genotypes.",
                         ["Drug", "Phenotype", "Population", "Recommendation", "Strength", "Ref"],
-                        [[_name(r["drug"]), r["phenotype"], r.get("population"), r.get("recommendation"),
+                        [[_name(r["drug"]), r["phenotype"], _pop(r), r.get("recommendation"),
                           r.get("classification"), b.refs.cell([r["id"]])] for r in geno_recs],
                         [1.4, 1.8, 1.2, 3.6, 1.0, 0.8])
             b.p(f"Recommendations matched exactly to the patient's CPIC phenotype are given in Table {n}.")

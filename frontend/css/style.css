@@ -414,7 +414,6 @@ legend { font-weight: 600; font-size: 0.9rem; margin-bottom: 6px; }
 .ai-card { border-top: 3px solid var(--accent); }
 .ai-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .ai-head h2 { margin: 0; }
-.ai-spark { color: var(--accent); }
 .ai-meta { margin: 6px 0 12px; }
 .report-preview { font-size: 1.02rem; }
 .report-preview > :first-child { margin-top: 0; }
@@ -799,6 +798,38 @@ footer { text-align: center; color: var(--muted); font-size: 0.8rem; padding: 20
   .glance { padding: 10px 12px; }
   .glance li { grid-template-columns: 1fr; gap: 0; }
 }
+
+/* ---------- Result tabs (js/tabs.js): Clinical / Extra / Export ---------- */
+.section-nav { align-items: center; }
+.results [data-in][hidden] { display: none !important; }
+.result-tabs { display: flex; flex: none; gap: 2px; padding: 3px; margin-right: 8px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--border); }
+.result-tabs button { padding: 6px 14px; border: 0; border-radius: 7px; background: transparent; color: var(--muted);
+  font: inherit; font-size: 0.9rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.result-tabs button:hover { color: var(--text); }
+.result-tabs button.active { background: var(--surface); color: var(--accent); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.result-tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The header's counts and source pills are details: shown with the Extra tab only. */
+.results:not([data-tab="extra"]) .entity-header .kpis,
+.results:not([data-tab="extra"]) .entity-header .source-status { display: none; }
+.more-note { margin: 14px 0 0; }
+.export-list { display: grid; gap: 12px; }
+.export-item { display: flex; gap: 16px; align-items: center; justify-content: space-between; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+.export-item p { margin: 4px 0 0; }
+.export-action { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; }
+@media (max-width: 640px) {
+  .result-tabs button { padding: 6px 10px; }
+  .export-item { flex-direction: column; align-items: stretch; }
+  .export-action { align-items: stretch; }
+}
+
+.advanced { margin-top: 12px; }
+.advanced > summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+.advanced[open] > summary { margin-bottom: 8px; }
+.score-why > summary { cursor: pointer; color: var(--muted); }
+.more-alerts { margin-top: 10px; }
+.more-alerts > summary { cursor: pointer; color: var(--muted); font-weight: 600; }
 
 /* ---------- Phones ---------- */
 @media (max-width: 760px) {

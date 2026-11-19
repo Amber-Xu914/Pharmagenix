@@ -86,6 +86,8 @@ def test_recommendations_match_the_phenotype_exactly(cpic):
     clop = [r for r in recs if r["drug"] == "CLOPIDOGREL"]
     assert [r["recommendation"] for r in clop] == [CLOPIDOGREL_PM]  # not the normal-metabolizer row
     assert clop[0]["population"] == "CVI ACS PCI" and clop[0]["short_recommendation"].startswith("Avoid standard dose")
+    assert clop[0]["population_label"] == "Cardiovascular: acute coronary syndrome and/or PCI"
+    assert G.population_label("general") == "" and G.population_label("new code") == "new code"
     # amitriptyline needs CYP2D6 too: no recommendation, but the missing gene is reported
     assert not any(r["drug"] == "AMITRIPTYLINE" for r in recs)
     assert incomplete == [{"drug": "AMITRIPTYLINE", "needs": ["CYP2D6"]}]
