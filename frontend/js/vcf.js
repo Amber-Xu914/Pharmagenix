@@ -8,6 +8,7 @@ import { restrictionList } from "./availability.js";
 import { NetworkView } from "./network.js";
 import { downloadReport } from "./report.js";
 import { medicationList, renderSafety, safetyMarkers } from "./safety.js";
+import { renderVcfGlance } from "./glance.js";
 import { renderReports } from "./summary.js";
 import { el, focusEvidence } from "./util.js";
 import { SOURCE_NAMES, cacheNotice, renderTrace, sourcesChecked } from "./workflow.js";
@@ -221,6 +222,7 @@ export function renderVcfQuery(query) {
   renderHeader(query, evidence);
   renderTrace($("vcf-trace"), withAgentTrace(query), VCF_STAGES);
   $("vcf-trace").append(cacheNotice(evidence));
+  renderVcfGlance($("vcf-glance"), evidence);
   renderVerdict(evidence);
   renderReports($("vcf-reports"), query, { title: "Analysis agent" });
   renderClinical(query);

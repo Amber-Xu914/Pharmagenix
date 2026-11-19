@@ -68,6 +68,11 @@ What the gene's product does (from its profile) and the headline: which drugs ac
 Group by relationship type (inhibition, induction, binding, metabolism…), strongest grade first.
 ## Pharmacogenomic (SNP-specific) findings
 {% endif %}
+{% if genotypes_block %}
+The patient's genotype results are given below ("Patient genotypes"). Start this section with them: each gene's
+phenotype and the CPIC recommendation for each drug, citing the patient-genotype evidence IDs; do not apply a
+recommendation to a phenotype other than the one given.
+{% endif %}
 ## Clinical significance
 If drug–drug interactions with the user's current medications or drug warnings are listed, report them here with
 their severity and evidence IDs; never add interactions that are not listed.
@@ -252,6 +257,12 @@ def format_evidence_item(item):
         label = f" | label ({item.get('label_title')}): \"{item['label_text']}\"" if item.get("label_text") else ""
         return (f"[{item['id']}] Drug–drug interaction check ({item['source']}) | {item['drug']} with {item['other']} "
                 f"({item['context']}) | severity: {item['severity']} | {item['summary']}{label}")
+    if kind == "genotype":
+        implications = "; ".join(f"{g}: {t}" for g, t in (item.get("implications") or {}).items())
+        return (f"[{item['id']}] Patient genotype → CPIC recommendation | {item['drug']} | patient: "
+                f"{item['genotype']} → {item['phenotype']} | population: {item['population']} | implication: "
+                f"{implications[:400] or 'n/a'} | recommendation: {(item.get('recommendation') or 'n/a')[:600]} | "
+                f"classification: {item.get('classification') or 'n/a'} | CPIC level {item.get('cpic_level') or 'n/a'}")
     if kind == "oncokb":
         return (f"[{item['id']}] OncoKB | {item['gene']} {item['protein_change']} | {item['drug']} | "
                 f"{item['significance']} | {item['level']} | cancer type: {item.get('cancer_type') or 'n/a'}")
@@ -294,10 +305,28 @@ def format_pair(row, shown):
     if row.get("interactions"):
         conflicts += " | INTERACTION WITH CURRENT MEDICATION: " + "; ".join(
             f"{a['other']} ({a['severity']}) [{a['evidence_id']}]" for a in row["interactions"] if a["evidence_id"] in shown)
+    if row.get("genotype"):
+        conflicts += " | PATIENT GENOTYPE (CPIC): " + "; ".join(
+            f"{g['phenotype']}: {g['summary']} ({g['classification']}) [{g['evidence_id']}]"
+            for g in row["genotype"] if g["evidence_id"] in shown)
     evidence_ids = [eid for eid in row["evidence_ids"] if eid in shown]
     return (f"- {row['gene']} – {row['drug']} | "
             f"grade: {row['grade_label']} ({row['grade_reason']}) | relationship: {', '.join(row['categories'])} | "
             f"evidence: {', '.join(evidence_ids[:8])}{conflicts}")
+
+
+def genotypes_block(block):
+    """The patient's genotypes as entered and resolved (the recommendations are evidence items)."""
+    if not block:
+        return ""
+    lines = []
+    for g in block.get("entered") or []:
+        result = (f"→ {g['phenotype']}" + (f" (activity score {g['activity_score']})" if g.get("activity_score") else "")
+                  if g["status"] == "ok" else f"not interpreted: {g.get('note') or g['status']}")
+        lines.append(f"- {g['input']} {result}" + "".join(f" | {n}" for n in g.get("phenoconversion") or []))
+    for i in block.get("incomplete") or []:
+        lines.append(f"- {i['drug']}: the CPIC recommendation also needs {', '.join(i['needs'])} (not given)")
+    return "\n".join(lines)
 
 
 def _format_lookup(lookup):
@@ -309,7 +338,7 @@ def select_prompt_evidence(items, limit):
     by_kind = {}
     for item in items:
         by_kind.setdefault(item["kind"], []).append(item)
-    quotas = {"profile": 0.03, "ddi": 0.1, "interaction": 0.3, "mechanism": 0.12, "guideline": 0.12,
+    quotas = {"genotype": 0.1, "profile": 0.03, "ddi": 0.1, "interaction": 0.3, "mechanism": 0.12, "guideline": 0.12,
               "fda_cyp": 0.08, "variant_annotation": 0.12, "publication": 0.08, "drug_info": 0.05}
     chosen = []
     for kind, share in quotas.items():
@@ -419,11 +448,14 @@ def render_prompt(template, query, evidence, max_items):
         "outcome": evidence.get("outcome") or {},
         "checked_sources": (evidence.get("outcome") or {}).get("checked_sources", []),
         "pairs_block": "\n".join(format_pair(r, shown) for r in pairs[:40]) or "(none)",
+        "genotypes_block": genotypes_block(evidence.get("genotypes")),
         # Still provided for templates written when there were several workflows.
         "workflow_number": 1,
         "workflow_label": WORKFLOW_LABEL,
     }
     context["analysis_context"] = _env.from_string(REPORT_INSTRUCTIONS).render(**context)
+    if context["genotypes_block"]:
+        context["analysis_context"] += f"\n\nPatient genotypes (entered by the user):\n{context['genotypes_block']}"
 
     system = _env.from_string(template.system_prompt).render(**context)
     if OUTPUT_LANGUAGE_INSTRUCTION not in system:

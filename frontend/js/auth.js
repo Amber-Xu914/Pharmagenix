@@ -1,8 +1,9 @@
 import { api } from "./api.js";
-import { el, formatDate } from "./util.js";
+import { el, formatDate, latestOnly } from "./util.js";
 
 const $ = (id) => document.getElementById(id);
 const state = { user: null, mode: "login" };
+const historyRequest = latestOnly();
 
 const MODES = {
   login: { submit: "Log in", autocomplete: "current-password", call: api.login },
@@ -26,15 +27,17 @@ function setOpen(open) {
 async function loadHistory() {
   const list = $("history-list");
   list.replaceChildren(el("li", { class: "muted" }, "Loading…"));
+  const isLatest = historyRequest();
   try {
     const queries = await api.history();
+    if (!isLatest()) return;
     list.replaceChildren(...(queries.length ? queries.map((q) => el("li", {},
       el("a", { href: `/?q=${q.id}` }, q.entity_type === "vcf" ? `🧪 ${q.entities[0]}` : `🧬 ${q.entities[0]}`),
       el("span", { class: "muted" }, ` · ${[q.cancer_type, q.followup_question && "follow-up",
         q.status !== "complete" && q.status, formatDate(q.created_at)].filter(Boolean).join(" · ")}`)))
       : [el("li", { class: "muted" }, "No searches yet: they are saved here while you are logged in.")]));
   } catch (err) {
-    list.replaceChildren(el("li", { class: "report-error" }, err.message));
+    if (isLatest()) list.replaceChildren(el("li", { class: "report-error" }, err.message));
   }
 }
 

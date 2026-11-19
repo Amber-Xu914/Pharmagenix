@@ -113,6 +113,8 @@
 
           <label class="meds-field small">Current medications <span class="muted">(optional, comma-separated: checked for drug–drug interactions)</span>
             <input id="medications" type="text" autocomplete="off" placeholder="e.g. omeprazole, fluoxetine"></label>
+          <label class="meds-field small">Patient genotypes <span class="muted">(optional, separated by “;”: turned into CPIC phenotypes and dosing recommendations)</span>
+            <input id="genotypes" type="text" autocomplete="off" placeholder="e.g. CYP2C19 *2/*2; CYP2D6 poor metabolizer; HLA-B*57:01 negative"></label>
 
           <div class="options small">
             <label class="chip"><input id="compare" type="checkbox"> <span id="compare-label" class="compare-label">Generate comparison report</span></label>
@@ -204,7 +206,8 @@
         <button id="report-docx" class="secondary small" type="button">Download report (.docx)</button>
         <span id="report-docx-status" class="small muted" role="status"></span>
       </div>
-      <!-- Rule-based "no known interaction" verdict; not written by the AI -->
+      <!-- Rule-based "at a glance" lines and "no known interaction" verdict; not written by the AI -->
+      <div id="glance"></div>
       <div id="verdict"></div>
       <div id="reports"></div>
 
@@ -243,6 +246,7 @@
           <button id="export-csv" class="secondary small" type="button">Export CSV</button>
         </div>
         <div class="table-wrap"><table id="dgi-table"></table></div>
+        <button id="table-more" class="link-btn small hidden" type="button"></button>
         <button id="toggle-unspecified" class="link-btn small hidden" type="button"></button>
       </div>
 
@@ -264,6 +268,7 @@
 
     <section id="sec-pgx" class="card section">
       <div class="section-head"><h2>Pharmacogenomics</h2></div>
+      <div id="genotypes-result"></div>
       <div id="pgx"></div>
     </section>
 
@@ -306,6 +311,7 @@
         <button id="vcf-report-docx" class="secondary small" type="button">Download report (.docx)</button>
         <span id="vcf-report-docx-status" class="small muted" role="status"></span>
       </div>
+      <div id="vcf-glance"></div>
       <div id="vcf-verdict"></div>
       <div id="vcf-reports"></div>
       <div id="vcf-clinical"></div>

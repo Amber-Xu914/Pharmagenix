@@ -103,6 +103,7 @@ class Config:
     OPENFDA_API_KEY = os.getenv("OPENFDA_API_KEY", "")
     MAX_DDI_DRUGS = 20                # drugs of one result checked against the current medications
     MAX_CURRENT_MEDICATIONS = 15
+    MAX_GENOTYPES = 10                # pharmacogene results entered per search (services/genotypes.py)
     # Workflow 4 (patient VCF): cancer types, driver genes and variant-level drug evidence
     ONCOTREE_API_URL = os.getenv("ONCOTREE_API_URL", "https://oncotree.info/api")
     INTOGEN_DRIVERS_URL = os.getenv(

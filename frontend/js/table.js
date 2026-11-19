@@ -4,6 +4,8 @@ import { gradeBadge } from "./workflow.js";
 
 // Rows with an unspecified interaction type (about 90% of DGIdb) are collapsed to this many until expanded.
 const UNSPECIFIED_PREVIEW = 5;
+// Rows rendered at a time; "Show more" adds another page (a gene such as CYP3A4 has hundreds of interactions).
+const PAGE_SIZE = 50;
 const GRADE_ORDER = Object.keys(GRADES);
 
 const phaseOf = (row) => Number(/Phase (\d+(?:\.\d+)?)/.exec(row.level || "")?.[1] ?? -1);
@@ -42,19 +44,24 @@ const COLUMNS = [
 ];
 
 export class DgiTable {
-  constructor({ table, filterInput, categorySelect, countEl, exportButton, toggleButton }) {
-    Object.assign(this, { table, filterInput, categorySelect, countEl, toggleButton });
+  constructor({ table, filterInput, categorySelect, countEl, exportButton, toggleButton, moreButton }) {
+    Object.assign(this, { table, filterInput, categorySelect, countEl, toggleButton, moreButton });
     this.rows = [];
     this.items = new Map();
     this.pbs = new Map();
     this.sortKey = null;
     this.sortDir = 1;
     this.showAll = false;
-    filterInput.addEventListener("input", () => this.render());
-    categorySelect.addEventListener("change", () => this.render());
+    this.limit = PAGE_SIZE;
+    filterInput.addEventListener("input", () => this.render({ resetPage: true }));
+    categorySelect.addEventListener("change", () => this.render({ resetPage: true }));
     exportButton.addEventListener("click", () => this.exportCsv());
     toggleButton.addEventListener("click", () => {
       this.showAll = !this.showAll;
+      this.render();
+    });
+    moreButton.addEventListener("click", () => {
+      this.limit += PAGE_SIZE;
       this.render();
     });
   }
@@ -65,6 +72,7 @@ export class DgiTable {
     this.items = items;
     this.sortKey = null;
     this.showAll = false;
+    this.limit = PAGE_SIZE;
     const categories = [...new Set(this.rows.flatMap((r) => r.categories))];
     const current = this.categorySelect.value;
     this.categorySelect.replaceChildren(
@@ -97,15 +105,18 @@ export class DgiTable {
     return { rows: shown, hidden: rows.length - shown.length };
   }
 
-  render() {
+  /** resetPage: back to the first page (a new filter or sort order). */
+  render({ resetPage = false } = {}) {
+    if (resetPage) this.limit = PAGE_SIZE;
     const filtered = this.filteredRows();
-    const { rows, hidden } = this.visibleRows(filtered);
+    const { rows: visible, hidden } = this.visibleRows(filtered);
+    const rows = visible.slice(0, this.limit);
     const head = el("tr", {}, COLUMNS.map((c) => {
       const th = el("th", { "data-sort": c.key, class: this.sortKey === c.key ? (this.sortDir > 0 ? "asc" : "desc") : null }, c.label);
       th.addEventListener("click", () => {
         this.sortDir = this.sortKey === c.key ? -this.sortDir : 1;
         this.sortKey = c.key;
-        this.render();
+        this.render({ resetPage: true });
       });
       return th;
     }));
@@ -114,6 +125,9 @@ export class DgiTable {
       : [el("tr", {}, el("td", { colspan: COLUMNS.length, class: "muted" }, "No interactions match."))];
     this.table.replaceChildren(el("thead", {}, head), el("tbody", {}, body));
     this.countEl.textContent = `${rows.length} / ${this.rows.length} rows`;
+    const remaining = visible.length - rows.length;
+    this.moreButton.classList.toggle("hidden", remaining <= 0);
+    this.moreButton.textContent = `Show ${Math.min(remaining, PAGE_SIZE)} more rows (${remaining} not shown)`;
 
     const collapsible = this.visibleRows(filtered, false).hidden > 0;
     this.toggleButton.classList.toggle("hidden", !collapsible);
@@ -153,6 +167,7 @@ export class DgiTable {
       this.showAll = true;
       this.filterInput.value = "";
       this.categorySelect.value = "";
+      this.limit = Infinity; // the row may be on a later page
       this.render();
       row = this.table.querySelector(selector);
     }

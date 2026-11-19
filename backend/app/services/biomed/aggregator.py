@@ -31,6 +31,7 @@ from .uniprot import UniProtClient
 
 from ..relations import matches
 from .. import safety  # module import: safety imports this package too
+from .. import genotypes as pgx_genotypes
 
 logger = logging.getLogger(__name__)
 
@@ -63,10 +64,12 @@ def _local(status, releases, name, fn):
     return _safe(status, name, fn, version=release.version)
 
 
-def collect_evidence(name, relation_types, resolved=None, entity_type="gene", medications=()):
+def collect_evidence(name, relation_types, resolved=None, entity_type="gene", medications=(), genotypes=()):
     """name: what the user typed; entity_type: "gene" (gene -> drugs) or "drug" (drug -> genes).
     resolved: its stage 1 entry (explorer.py has already checked it). medications: the patient's current
-    medications (names), checked for drug–drug interactions with the drugs found (services/safety.py)."""
+    medications (names), checked for drug–drug interactions with the drugs found (services/safety.py).
+    genotypes: the patient's pharmacogene results ([{"gene", "value"}]), turned into CPIC recommendations for the
+    drugs found (services/genotypes.py)."""
     cfg = current_app.config
     timeout = cfg["HTTP_TIMEOUT"]
     status = {}
@@ -161,6 +164,29 @@ def collect_evidence(name, relation_types, resolved=None, entity_type="gene", me
         safety_block = safety.check_table(table, entry if is_drug else None, list(medications), items, status)
         tracking.set_outputs(s, {"interactions": len(safety_block["interactions"])})
 
+    # The patient's genotypes: phenotype and the matching CPIC recommendation for each drug of the result.
+    genotype_block = None
+    if genotypes:
+        with tracking.span("genotypes", inputs={"genotypes": list(genotypes)}) as s:
+            drugs_found = [{"name": r["drug"], "chembl_id": r.get("chembl_id")} for r in table]
+            if is_drug:
+                drugs_found.insert(0, {"name": symbol, "chembl_id": entry.get("id")})
+            cpic_release = releases["cpic"].version if "cpic" in releases else None
+            if cpic_release is None:
+                status.setdefault("cpic", {"state": "disabled", "count": 0, "error": NOT_IMPORTED})
+            genotype_block = pgx_genotypes.check(list(genotypes), drugs_found, safety_block["medications"], items,
+                                                 status, cpic_release)
+            by_id = {i["id"]: i for i in items}
+            for row in table:
+                key = strip_salt(row["drug"]).upper()
+                row["genotype"] = [{"evidence_id": eid, "phenotype": by_id[eid]["phenotype"],
+                                    "classification": by_id[eid]["classification"],
+                                    "population": by_id[eid]["population"],
+                                    "summary": by_id[eid]["short_recommendation"]}
+                                   for eid in genotype_block["recommendations"]
+                                   if strip_salt(by_id[eid]["drug"]).upper() == key]
+            tracking.set_outputs(s, {"recommendations": len(genotype_block["recommendations"])})
+
     return {
         "outcome": outcome,
         "trace": _trace(entry, status, table, outcome, entity_type),
@@ -170,6 +196,7 @@ def collect_evidence(name, relation_types, resolved=None, entity_type="gene", me
         "network": build_network(items, [symbol]),
         "australian_availability": availability,
         "safety": safety_block,
+        "genotypes": genotype_block,
         "source_status": status,
         "counts": {
             "interactions": len(interactions),

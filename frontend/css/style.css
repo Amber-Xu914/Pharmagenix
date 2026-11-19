@@ -403,7 +403,7 @@ legend { font-weight: 600; font-size: 0.9rem; margin-bottom: 6px; }
 .sub-head { font-size: 0.95rem; margin: 18px 0 8px; }
 .sub-head:first-child { margin-top: 0; }
 
-.segmented { display: inline-flex; padding: 3px; gap: 2px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--border); }
+.segmented { display: inline-flex; flex-wrap: wrap; max-width: 100%; padding: 3px; gap: 2px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--border); }
 .segmented button { padding: 4px 14px; font-size: 0.85rem; border: none; border-radius: 7px; background: transparent; color: var(--muted); }
 .segmented button.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
 
@@ -464,7 +464,7 @@ legend { font-weight: 600; font-size: 0.9rem; margin-bottom: 6px; }
 .guideline .recs .badge { margin-left: 6px; }
 .summary-cell { min-width: 260px; max-width: 460px; }
 .papers { margin: 0; padding-left: 22px; }
-.papers li { margin-bottom: 10px; }
+.papers li { margin-bottom: 10px; overflow-wrap: anywhere; }
 .paper-title { font-weight: 600; text-decoration: none; }
 .paper-title:hover { text-decoration: underline; }
 .papers .badge { margin-left: 6px; }
@@ -778,6 +778,27 @@ footer { text-align: center; color: var(--muted); font-size: 0.8rem; padding: 20
 .clinical-grid label { display: flex; flex-direction: column; gap: 3px; }
 .clinical-grid .wide { grid-column: 1 / -1; }
 #vcf-clinical:not(:empty) { margin-top: 14px; }
+
+/* ---------- At a glance (js/glance.js): rule-based one-liners above the AI summary ---------- */
+.glance { margin: 0 0 16px; padding: 12px 16px; border: 1px solid var(--border); border-left: 4px solid var(--accent);
+  border-radius: 10px; background: var(--surface-2); }
+.glance-title { margin: 0 0 6px; font-weight: 700; font-size: 0.8rem; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted); }
+.glance ul { list-style: none; margin: 0 0 6px; padding: 0; display: grid; gap: 6px; }
+.glance li { display: grid; grid-template-columns: 9.5em 1fr; gap: 10px; align-items: baseline; overflow-wrap: anywhere; }
+.glance-label { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+.glance-ok .glance-label { color: var(--ok); }
+.glance-warn .glance-label { color: var(--warn); }
+.glance-danger .glance-label { color: var(--danger); }
+.glance-info .glance-label { color: var(--accent); }
+.glance p.muted { margin: 0; }
+.genotype-list { margin: 0 0 12px; padding-left: 18px; }
+.genotype-list li { margin-bottom: 4px; }
+.phenoconversion { color: var(--warn); margin-top: 2px; }
+@media (max-width: 640px) {
+  .glance { padding: 10px 12px; }
+  .glance li { grid-template-columns: 1fr; gap: 0; }
+}
 
 /* ---------- Phones ---------- */
 @media (max-width: 760px) {

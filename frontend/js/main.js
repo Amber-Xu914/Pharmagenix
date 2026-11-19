@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { renderAvailability } from "./availability.js";
+import { renderGenotypes, renderGlance } from "./glance.js";
 import { NetworkView } from "./network.js";
 import {
   headlineNumbers, interactionRows, pgxAlerts, queryGene, renderAlerts, renderHeader, renderLiterature, renderPgx,
@@ -13,7 +14,7 @@ import { initVcf, renderVcfQuery, vcfEvidenceTarget } from "./vcf.js";
 import { cacheNotice, renderProfiles, renderResolution, renderTrace, renderVerdict } from "./workflow.js";
 
 const $ = (id) => document.getElementById(id);
-const state = { meta: null, query: null, view: "table", networkStale: true, entityType: "gene" };
+const state = { meta: null, query: null, view: "table", networkStale: true, entityType: "gene", busy: false };
 
 const SEARCH_MODES = {
   gene: { label: "Gene name", placeholder: "Search a gene, e.g. CYP2C19, BRAF or TPMT",
@@ -40,6 +41,7 @@ const table = new DgiTable({
   countEl: $("table-count"),
   exportButton: $("export-csv"),
   toggleButton: $("toggle-unspecified"),
+  moreButton: $("table-more"),
 });
 const network = new NetworkView({ container: $("network"), info: $("network-info"), legend: $("network-legend") });
 const scrollBehavior = () => (matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth");
@@ -58,7 +60,7 @@ async function init() {
     label.textContent = `Generate comparison report (with ${comparison.model})${comparison.enabled ? "" : " — API key not configured"}`;
   });
 
-  initVcf({ run: (task, message) => withBusy([$("vcf-submit")], message, task) });
+  initVcf({ run: (task, message) => withBusy(message, task) });
   $("report-docx").addEventListener("click", () =>
     downloadReport(state.query, network, $("report-docx"), $("report-docx-status")));
 
@@ -106,7 +108,14 @@ function hideStatus() {
   $("status").className = "status hidden";
 }
 
-async function withBusy(buttons, message, task) {
+// Every button that starts a search or regenerates a report. Only one such request runs at a time: otherwise
+// whichever finished last would be shown, not the one asked for last.
+const BUSY_BUTTONS = "#submit-btn, #vcf-submit, #ask-form button[type=submit], #vcf-ask-form button[type=submit]";
+
+async function withBusy(message, task) {
+  if (state.busy) return;
+  state.busy = true;
+  const buttons = [...document.querySelectorAll(BUSY_BUTTONS)];
   buttons.forEach((b) => { b.disabled = true; });
   $("resolution").classList.add("hidden");
   showStatus(message, "info", true);
@@ -122,6 +131,7 @@ async function withBusy(buttons, message, task) {
       showStatus(`Request failed: ${err.message}`, "error");
     }
   } finally {
+    state.busy = false;
     buttons.forEach((b) => { b.disabled = false; });
   }
 }
@@ -144,6 +154,7 @@ function showQuery(query, { hash = "" } = {}) {
 
   const alerts = pgxAlerts(evidence.items || []);
   renderTrace($("workflow-trace"), query);
+  renderGlance($("glance"), query);
   renderVerdict($("verdict"), query);
   $("verdict").prepend(cacheNotice(evidence));
   renderReports($("reports"), query, { alerts: () => renderAlerts(alerts) });
@@ -165,7 +176,12 @@ function showQuery(query, { hash = "" } = {}) {
   $("profile-title").textContent = query.entity_type === "drug" ? "Drug profile" : "Gene profile";
   renderProfiles($("profiles"), items);
   const relations = query.relation_types || [];
+  const nGenotype = renderGenotypes($("genotypes-result"), evidence);
   renderPgx($("pgx"), items, { requested: !relations.length || relations.includes("snp") });
+  if (nGenotype) {
+    const pgxCount = document.querySelector('[data-count="pgx"]');
+    pgxCount.textContent = (Number(pgxCount.textContent) || 0) + nGenotype;
+  }
   renderLiterature($("literature"), items);
   renderAvailability($("availability"), evidence.australian_availability);
   const seen = new Set();
@@ -241,9 +257,10 @@ function search(extra = {}) {
     relation_types: selectedRelations(),
     compare: $("compare").checked,
     medications: medicationList($("medications")),
+    genotypes: $("genotypes").value.split(/[;\n]+/).map((s) => s.trim()).filter(Boolean),
     ...extra,
   };
-  withBusy([$("submit-btn")], `${SEARCH_MODES[type].busy} This usually takes 20–60 seconds…`, () => api.explore(body));
+  withBusy(`${SEARCH_MODES[type].busy} This usually takes 20–60 seconds…`, () => api.explore(body));
 }
 
 $("search-form").addEventListener("submit", (event) => {
@@ -255,8 +272,7 @@ $("ask-form").addEventListener("submit", (event) => {
   event.preventDefault();
   if (!state.query) return;
   const body = { followup_question: $("followup").value, compare: $("ask-compare").checked };
-  withBusy([...event.target.querySelectorAll("button")], "Regenerating the report from the existing evidence…",
-    () => api.ask(state.query.id, body));
+  withBusy("Regenerating the report from the existing evidence…", () => api.ask(state.query.id, body));
 });
 
 // Example chips fill in the search box; the user still presses Explore (a query takes 20–60 s and calls the LLMs).

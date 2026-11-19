@@ -71,7 +71,7 @@ def test_no_interaction_outcome():
 
 
 def test_llm_skipped_when_nothing_found(client, fake_sources, monkeypatch):
-    def empty(gene, relation_types, resolved=None, entity_type="gene", medications=()):
+    def empty(gene, relation_types, resolved=None, entity_type="gene", medications=(), genotypes=()):
         return {"items": [], "table": [], "network": {"nodes": [], "edges": []}, "source_status": {},
                 "outcome": {"status": "none"}}
 
