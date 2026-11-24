@@ -146,8 +146,9 @@ Clinical view opens Extra at that evidence.
 Above the AI summary, a short rule-based box (not written by the AI) gives one line per decision: the genotype
 recommendation, the best-supported drugs or genes with their PBS status, the worst drug interaction and any warnings.
 For a patient VCF it shows the first targeted option for consideration (evidence level, variants, PBS), the
-alternatives, the drugs not recommended because of resistance, and the worst interaction. Each line links to its
-evidence.
+alternatives, the drugs not recommended because of resistance, and the worst interaction. When no established
+targeted therapy is found, a **Next step** line points to standard of care and names the top exploratory hypothesis,
+with a link to the Exploratory track in the Extra tab. Each line links to its evidence.
 
 ## 🧪 Patient VCF → candidate drugs
 
