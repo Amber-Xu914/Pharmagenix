@@ -147,6 +147,19 @@ function levelText(c) {
   return c.track_reason;
 }
 
+/** With no established option: standard of care first, then where the exploratory (hypothesis) track is. */
+function nextStepLine(evidence) {
+  const exploratory = (evidence.tracks?.exploratory || []).filter((c) => !c.strong_resistance);
+  if (!exploratory.length) {
+    return line("info", "Next step", "Standard of care as per current guidelines; no exploratory drug candidates either.");
+  }
+  const top = exploratory[0];
+  return line("info", "Next step", "Standard of care as per current guidelines. Top exploratory hypothesis "
+    + "(not a recommendation): ", el("strong", {}, top.drug), ` (${levelText(top)}; ${top.variants.join(" + ")})`,
+    ...refs(top.evidence_ids.slice(0, 1)), `, ${exploratory.length} candidates in total → `,
+    el("a", { href: "#vcf-sec-exploratory" }, "see Extra › Exploratory"), "; consider a clinical trial.");
+}
+
 export function renderVcfGlance(container, evidence) {
   container.replaceChildren();
   if (evidence.outcome?.status !== "found") return;
@@ -168,6 +181,7 @@ export function renderVcfGlance(container, evidence) {
   } else {
     lines.push(line("warn", "First consideration", evidence.outcome.no_targeted_therapy
       || "No established targeted therapy without resistance for these variants."));
+    lines.push(nextStepLine(evidence));
   }
   if (resistant.length) {
     lines.push(line("danger", "Not recommended", `${resistant.slice(0, 4).map((c) => c.drug).join(", ")}`
