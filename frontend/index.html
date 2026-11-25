@@ -127,18 +127,19 @@
         <!-- Workflow 4: patient VCF + cancer type -> candidate drugs (js/vcf.js) -->
         <form id="vcf-form" class="vcf-form hidden" data-mode-pane="vcf">
           <p class="vcf-note small"><span class="test-badge">Test data only: synthetic mock VCFs, no real patients</span>
-            Lung cancer prototype. Upload a somatic VCF or pick a synthetic example.</p>
+            <span id="vcf-intro">Lung cancer prototype. Upload a somatic VCF.</span></p>
           <div class="vcf-inputs">
             <fieldset class="vcf-box">
               <legend>Somatic VCF</legend>
-              <div class="vcf-source segmented" role="tablist" aria-label="Variant source">
-                <button type="button" role="tab" data-source="example" class="active" aria-selected="true">Synthetic example</button>
-                <button type="button" role="tab" data-source="upload" aria-selected="false">Upload VCF</button>
+              <!-- The synthetic examples are for administrators: vcf.js shows this switch only when the backend lists them -->
+              <div class="vcf-source segmented hidden" role="tablist" aria-label="Variant source">
+                <button type="button" role="tab" data-source="example" aria-selected="false">Synthetic example</button>
+                <button type="button" role="tab" data-source="upload" class="active" aria-selected="true">Upload VCF</button>
               </div>
-              <div data-source-pane="example" class="stack">
+              <div data-source-pane="example" class="stack hidden">
                 <div id="vcf-examples" class="vcf-examples" role="radiogroup" aria-label="Synthetic mock VCFs"></div>
               </div>
-              <div data-source-pane="upload" class="stack hidden">
+              <div data-source-pane="upload" class="stack">
                 <input id="vcf-file" type="file" accept=".vcf,.vcf.gz,.gz">
                 <span class="muted small">Tumour–normal paired calls (SNVs / small indels; .vcf or .vcf.gz) with DP / AD
                   read counts for QC. Unannotated VCFs are annotated with Ensembl VEP.</span>

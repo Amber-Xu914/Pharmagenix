@@ -22,7 +22,12 @@ and accepts synthetic test data only.
 | Administrator | `admin@pharmagenix.test` | `Admin1234!` | All of the above, plus the admin console |
 
 Create (or reset) them with `flask --app run seed-demo`. The admin console also accepts the `ADMIN_TOKEN` from
-`backend/.env`. Searching does not require a login; logging in links searches and ratings to the account.
+`backend/.env`.
+
+**What needs a login.** A plain gene or drug search works without an account. Anything with patient data needs one:
+a patient VCF, current medications or genotypes. Such a result is private: only the account that made it, and
+administrators, can open it, and a shared link to it asks the viewer to log in. Logging out clears any result from
+the screen.
 
 ## Starting the system
 
@@ -152,9 +157,10 @@ with a link to the Exploratory track in the Extra tab. Each line links to its ev
 
 ## 🧪 Patient VCF → candidate drugs
 
-1. Select **Patient VCF → candidate drugs**.
-2. Pick one of the eight synthetic examples, or upload your own VCF / MAF file and tick **I confirm this file is
-   synthetic test data**.
+1. Log in, then select **Patient VCF → candidate drugs**.
+2. Upload your own VCF / MAF file and tick **I confirm this file is synthetic test data**. Administrators also see a
+   **Synthetic example** tab with the eight mock VCFs; other users, and visitors who are not logged in, see only the
+   upload form.
 3. Choose the cancer type (e.g. LUAD; you can also type "lung adenocarcinoma").
 4. Optionally enter **Current medications** and open **Clinical context** (stage, treatment status, age, sex,
    smoking, tumour purity, ECOG, brain metastases, other context). The clinical context is used only by the Clinical
@@ -243,7 +249,8 @@ queries**. [GK] statements stay marked in the document. File name: `Pharmagenix_
 Under every report:
 
 - **Answer quality**: give 1–5 stars, a comment and a suggestion, then **Submit feedback**. Ratings are averaged per
-  report, and administrators see them per model.
+  report, and administrators see them per model. Each person has one rating per report: submitting again (the button
+  then reads **Update feedback**) replaces your earlier rating instead of adding a second one.
 - **Ask a follow-up or regenerate**: type a question (e.g. "why is gefitinib down-ranked for this sample?") and
   submit. The stored evidence is reused, so no source is queried again, and a new report answers the question.
 
@@ -260,6 +267,9 @@ Open <http://127.0.0.1:5001/admin> while logged in as the administrator (or ente
 - **User feedback**: ratings, comments and suggestions.
 - **Model comparison**: success rate, latency, tokens and average rating per model, and the loaded reference
   data versions.
+- **Evaluation**: how well Workflow 4 does on the 8 mock VCFs: precision, recall, F1, specificity and a confusion
+  matrix for the drug recommendations, a confusion matrix and per-tier F1 for variant tiering, a per-case table
+  and the limitations of the test set. Refresh it with `flask --app run eval-metrics` (a few minutes, no LLM cost).
 
 ## Before a demo
 

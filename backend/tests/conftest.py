@@ -1,4 +1,5 @@
 import pytest
+from flask.testing import FlaskClient
 
 from app import create_app
 from app.config import TestConfig
@@ -26,9 +27,23 @@ class FakeLLM:
         return LLMResult(text=self.text, model=self.model, input_tokens=10, output_tokens=20, latency_ms=5)
 
 
+class BrowserClient(FlaskClient):
+    """A test client that behaves like frontend/js/api.js: every state-changing request sends the session's CSRF
+    token in the X-CSRF-Token header. Tests of the CSRF check itself use a plain FlaskClient (see test_security.py)."""
+
+    def open(self, *args, **kwargs):
+        method = (kwargs.get("method") or "GET").upper()
+        if method in {"POST", "PUT", "PATCH", "DELETE"}:
+            with self.session_transaction() as session:
+                token = session.setdefault("csrf_token", "test-csrf-token")
+            kwargs["headers"] = {"X-CSRF-Token": token, **dict(kwargs.get("headers") or {})}
+        return super().open(*args, **kwargs)
+
+
 @pytest.fixture
 def app():
     app = create_app(TestConfig)
+    app.test_client_class = BrowserClient
     with app.app_context():
         db.create_all()
         yield app
@@ -81,3 +96,24 @@ def fake_sources(monkeypatch):
     monkeypatch.setattr("app.services.llm.report_generator.get_llm_client",
                         lambda provider: FakeLLM(provider, answers[provider]))
     return {"answers": answers, "calls": calls}
+
+
+def log_in(client, email="clinician@example.com", password="correct-horse", admin=False):
+    """Register (which logs in) a user on this test client; searches with patient data need an account, and the
+    synthetic VCF examples an administrator."""
+    resp = client.post("/api/auth/register", json={"email": email, "password": password})
+    assert resp.status_code == 201, resp.get_json()
+    user = resp.get_json()["user"]
+    if admin:
+        from app.models import User
+
+        db.session.get(User, user["id"]).is_admin = True
+        db.session.commit()
+    return user
+
+
+@pytest.fixture
+def user_client(client):
+    """The test client, logged in as an ordinary (non-admin) user."""
+    log_in(client)
+    return client

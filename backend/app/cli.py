@@ -97,6 +97,29 @@ def register_cli(app):
         click.echo(f"\nDetails: MLflow UI -> experiment {app.config['MLFLOW_EXPERIMENT_PREFIX']}-vcf -> Evaluation runs "
                    f"(run {result.run_id})")
 
+    @app.cli.command("eval-metrics")
+    @click.option("--case", "cases", multiple=True, help="Only this mock VCF (repeatable).")
+    @click.option("--no-save", is_flag=True, help="Print the metrics without writing docs/evaluation/pipeline_metrics.json.")
+    def eval_metrics(cases, no_save):
+        """Precision / recall / F1 and confusion matrices of Workflow 4 on the mock VCFs (app/evaluation.py);
+        shown in the admin console (Evaluation tab). Deterministic stages only: no LLM cost."""
+        import json
+
+        from .evaluation import METRICS_PATH, run_metrics
+
+        result = run_metrics(cases)
+        d, t = result["drug_recommendation"], result["variant_tiering"]
+        c = d["confusion"]
+        click.echo(f"Drug recommendation (n={d['n']}): TP {c['tp']} FP {c['fp']} FN {c['fn']} TN {c['tn']} · "
+                   f"precision {d['precision']} · recall {d['recall']} · F1 {d['f1']}")
+        click.echo(f"Variant tiering (n={t['n']}): accuracy {t['accuracy']} · macro F1 {t['macro_f1']}")
+        for label, row in zip(t["labels"], t["matrix"]):
+            click.echo(f"  expected {label:10} -> predicted {row}")
+        if not no_save:
+            with open(METRICS_PATH, "w") as fh:
+                json.dump(result, fh, indent=1)
+            click.echo(f"Saved {METRICS_PATH}")
+
     @app.cli.command("benchmark")
     @click.option("--dry-run", is_flag=True, help="Build the evidence and print the plan; no LLM calls.")
     @click.option("--rescore", is_flag=True, help="Recompute the metrics from the saved reports; no LLM calls.")

@@ -3,6 +3,7 @@ from functools import wraps
 
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from ..accounts import current_user
 from ..errors import APIError
@@ -77,11 +78,20 @@ def create_template():
         raise APIError("name, system_prompt and user_template are required")
     _check_renders(system_prompt, user_template)
 
-    latest = db.session.scalar(db.select(func.max(PromptTemplate.version)).where(PromptTemplate.name == name))
-    template = PromptTemplate(name=name, version=(latest or 0) + 1, system_prompt=system_prompt,
+    # Saving the same text again (a resent request) returns the latest version instead of adding an identical one.
+    latest = PromptTemplate.query.filter_by(name=name).order_by(PromptTemplate.version.desc()).first()
+    if latest and latest.system_prompt == system_prompt and latest.user_template == user_template:
+        if body.get("activate"):
+            _activate(latest)
+        return jsonify(latest.to_dict()), 200
+    template = PromptTemplate(name=name, version=(latest.version if latest else 0) + 1, system_prompt=system_prompt,
                               user_template=user_template, notes=body.get("notes"), is_active=False)
     db.session.add(template)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:  # another save took this version number at the same moment (uq_template_name_version)
+        db.session.rollback()
+        raise APIError("This template was just saved by another request; reload the list and try again", 409)
     if body.get("activate"):
         _activate(template)
     return jsonify(template.to_dict()), 201
@@ -170,6 +180,21 @@ def list_feedback():
         }
 
     return _paginate(stmt, serialize)
+
+
+@bp.get("/evaluation")
+def evaluation():
+    """Precision / recall / F1 and confusion matrices of Workflow 4 on the mock VCFs, as saved by
+    `flask --app run eval-metrics` (app/evaluation.py; the run takes a few minutes, so the page shows the saved one)."""
+    import json
+    import os
+
+    from ..evaluation import METRICS_PATH
+
+    if not os.path.exists(METRICS_PATH):
+        raise APIError("No evaluation yet: run  flask --app run eval-metrics  in backend/", 404)
+    with open(METRICS_PATH) as fh:
+        return jsonify(json.load(fh))
 
 
 @bp.get("/stats")

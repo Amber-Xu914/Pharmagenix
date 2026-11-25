@@ -21,6 +21,38 @@ six checks per case. Results (MLflow run `dcb610d739a44c07b8ec20a9df7d1572`, 11 
 | `established_not_contaminated` | no drug from a QC artefact or a Tier 3 variant on the established track | 100% |
 | `no_therapy_flag_correct` | "no approved targeted therapy" shown exactly when expected (LUSC, SCLC, Tier 3 only) | 100% |
 
+### Precision, recall, F1 and confusion matrices
+
+`flask --app run eval-metrics` scores the same 8 cases as classification tasks and saves
+`pipeline_metrics.json`, shown in the admin console under **Evaluation** (run of 24 November 2026).
+
+**Drug recommendation (binary).** Positive = recommended (established track, not down-ranked). Each case's guideline
+drugs are positives. Negatives are drugs with resistance from the patient's variants (e.g. gefitinib with T790M,
+osimertinib with C797S) and drugs that only a QC artefact or another cancer type would support. In the three
+"no approved targeted therapy" cases, every recommendation counts as a false positive.
+
+|  | Predicted: recommended | Predicted: not recommended |
+| --- | --- | --- |
+| **Expected: recommended** | TP = 8 | FN = 0 |
+| **Expected: not recommended** | FP = 0 | TN = 17 |
+
+Precision 100%, recall 100%, F1 100%, specificity 100% (n = 25 labelled drugs).
+
+**Variant tiering (multi-class).** 25 labelled variants: Tier 1 (n = 11), Tier 2 (n = 11) and Tier 3 (n = 3). All
+25 were assigned their expected tier, so the confusion matrix is diagonal: accuracy 100%, macro F1 100%. Where a
+case accepts two tiers (e.g. STK11 Q37*, Tier 1 or 2), an accepted tier counts as correct.
+
+**How far these numbers go.** They show that the rules behave as designed on the cases they were built for. They are
+not an estimate of accuracy on real patients:
+
+- **Small test set:** 8 synthetic cases.
+- **No independent labels:** the team wrote the expected answers from CIViC, FDA labels and NCCN, not an
+  independent clinical panel.
+- **No held-out set:** the same cases guided the rules while they were being built.
+- **Partial scoring:** only the labelled drugs are scored. Other recommendations, such as amivantamab regimens for
+  EGFR L858R, are listed per case but not counted.
+- **Variant types not covered:** fusions, copy-number changes and PD-L1 are outside the pipeline.
+
 ## 2. LLM benchmark: grounded vs. ungrounded
 
 `flask --app run benchmark` (backend/app/benchmark.py). Full results: [benchmark.md](benchmark.md); per-case values:

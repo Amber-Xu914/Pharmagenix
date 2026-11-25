@@ -33,6 +33,7 @@
         <button data-tab="failures">Failed / flagged</button>
         <button data-tab="feedback">User feedback</button>
         <button data-tab="stats">Model comparison</button>
+        <button data-tab="evaluation">Evaluation</button>
       </nav>
 
       <!-- Prompt logs -->
@@ -106,6 +107,11 @@
       <!-- Stats -->
       <div data-panel="stats" class="hidden">
         <div id="stats" class="stat-grid"></div>
+      </div>
+
+      <!-- Evaluation: Workflow 4 against the expected answers of the mock VCFs -->
+      <div data-panel="evaluation" class="hidden">
+        <div id="evaluation"></div>
       </div>
     </section>
   </main>

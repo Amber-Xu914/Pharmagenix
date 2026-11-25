@@ -418,8 +418,17 @@ def gene_context(genes, status):
 
 # ---------- Stage 5: evidence items and classification ----------
 
+def variant_url(gene, in_civic):
+    """Link for a patient-variant item: the gene's CIViC page when CIViC has evidence for the variant (CIViC's
+    /links/entrez_name/ redirect; its old search URL now lands on the home page), otherwise the Ensembl gene page."""
+    if in_civic:
+        return f"https://civicdb.org/links/entrez_name/{gene}"
+    return f"https://www.ensembl.org/Homo_sapiens/Gene/Summary?g={gene}"
+
+
 def build_items(tiered, civic, oncokb, interactions, mechanisms, releases):
     items = []
+    civic_variants = {vid for e in civic for vid in e["variant_ids"]}
 
     def add(item):
         item["id"] = f"E{len(items) + 1}"
@@ -434,7 +443,7 @@ def build_items(tiered, civic, oncokb, interactions, mechanisms, releases):
             "vaf": v.get("vaf"), "clinvar": v.get("clinvar") or [], "tier": v["tier"], "tier_reason": v["tier_reason"],
             "hotspot": v.get("hotspot"), "tier3": v.get("tier3"), "pathways": v.get("pathways"),
             "subtype_frequency": v.get("subtype_frequency"),
-            "url": f"https://civicdb.org/search/molecular-profiles?name={v['gene']}",
+            "url": variant_url(v["gene"], v["id"] in civic_variants),
         })
     release = releases["civic"].version if "civic" in releases else None
     for e in civic:

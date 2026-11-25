@@ -10,7 +10,7 @@ import { downloadReport } from "./report.js";
 import { medicationList, renderSafety, safetyMarkers } from "./safety.js";
 import { renderVcfGlance } from "./glance.js";
 import { renderReports } from "./summary.js";
-import { copyLink, el, focusEvidence } from "./util.js";
+import { copyLink, el, focusEvidence, latestOnly } from "./util.js";
 import { SOURCE_NAMES, cacheNotice, renderTrace, sourcesChecked } from "./workflow.js";
 
 const $ = (id) => document.getElementById(id);
@@ -79,10 +79,6 @@ export async function initVcf({ run }) {
   }
   // A combobox: the OncoTree lung types are suggestions, but any text can be typed (the backend maps names,
   // codes and common aliases such as "lung adenocarcinoma" to OncoTree).
-  const typeLabel = (code) => {
-    const t = options.cancer_types.find((x) => x.code === code);
-    return t ? `${t.name} (${t.code})` : code;
-  };
   $("vcf-cancer-list").replaceChildren(...options.cancer_types.map((t) => el("option", { value: typeLabel(t.code) })));
   $("vcf-cancer").value = typeLabel("LUAD");
   // Browsers filter a datalist by the text in the box, so on focus the current value moves to the placeholder (the
@@ -98,13 +94,17 @@ export async function initVcf({ run }) {
     if (!cancerBox.value.trim() && cancerBox.placeholder !== defaultPlaceholder) cancerBox.value = cancerBox.placeholder;
     cancerBox.placeholder = defaultPlaceholder;
   });
-  $("vcf-examples").replaceChildren(...options.examples.map((x, i) => el("label", { class: "vcf-example" },
-    el("input", { type: "radio", name: "vcf-example", value: x.id, checked: i === 0,
-                  onchange: () => { $("vcf-cancer").value = typeLabel(x.cancer_type); } }),
-    el("span", {}, el("span", { class: "code" }, x.cancer_type), ` ${x.label} `,
-      el("a", { href: `/api/vcf/examples/${encodeURIComponent(x.id)}`, class: "small", title: "Download the mock VCF",
-                onclick: (e) => e.stopPropagation() }, "VCF ↓")))));
-  if (options.examples[0]) $("vcf-cancer").value = typeLabel(options.examples[0].cancer_type);
+  renderExamples(options.examples);
+  // Logging in or out changes whether the examples are offered (administrators only): ask the backend again.
+  // Logging out and in again quickly starts two requests: only the answer to the latest one is used.
+  const optionsRequest = latestOnly();
+  document.addEventListener("auth:change", async () => {
+    const isLatest = optionsRequest();
+    try {
+      const { examples } = await api.vcfOptions();
+      if (isLatest()) renderExamples(examples);
+    } catch { /* keep the current form */ }
+  });
   $("vcf-ready").classList.toggle("hidden", options.ready);
   $("vcf-ready").textContent = options.ready ? ""
     : "Reference data for this workflow is not imported yet. Run: flask --app run import-data oncotree intogen civic hotspots cbioportal";
@@ -195,8 +195,30 @@ function setMode(mode) {
   document.dispatchEvent(new CustomEvent("mode:change", { detail: mode })); // gene / drug share the search form
 }
 
+function typeLabel(code) {
+  const t = options?.cancer_types.find((x) => x.code === code);
+  return t ? `${t.name} (${t.code})` : code;
+}
+
+/** The synthetic mock VCFs. The backend lists them only for an administrator; everyone else sees the upload form
+ *  alone, without the "Synthetic example / Upload VCF" switch. */
+function renderExamples(examples) {
+  const admin = examples.length > 0;
+  $("vcf-examples").replaceChildren(...examples.map((x, i) => el("label", { class: "vcf-example" },
+    el("input", { type: "radio", name: "vcf-example", value: x.id, checked: i === 0,
+                  onchange: () => { $("vcf-cancer").value = typeLabel(x.cancer_type); } }),
+    el("span", {}, el("span", { class: "code" }, x.cancer_type), ` ${x.label} `,
+      el("a", { href: `/api/vcf/examples/${encodeURIComponent(x.id)}`, class: "small", title: "Download the mock VCF",
+                onclick: (e) => e.stopPropagation() }, "VCF ↓")))));
+  document.querySelector(".vcf-source").classList.toggle("hidden", !admin);
+  setSource(admin ? "example" : "upload");
+  if (admin) $("vcf-cancer").value = typeLabel(examples[0].cancer_type);
+  $("vcf-intro").textContent = admin ? "Lung cancer prototype. Upload a somatic VCF or pick a synthetic example."
+    : "Lung cancer prototype. Upload a somatic VCF.";
+}
+
 function source() {
-  return document.querySelector(".vcf-source button.active")?.dataset.source || "example";
+  return document.querySelector(".vcf-source button.active")?.dataset.source || "upload";
 }
 
 function setSource(name) {
@@ -448,17 +470,30 @@ function variantRow(v) {
     el("td", { class: "small" }, v.tier_reason || v.reason));
 }
 
+// Rows shown at a time in the variant tables; "Show more" adds another page (a whole-exome VCF has thousands).
+const TABLE_PAGE = 100;
+
 function filterableTable(rows, header, rowFn) {
   const filter = el("input", { type: "search", placeholder: "Filter…" });
   const body = el("tbody");
+  const more = el("button", { type: "button", class: "secondary small hidden" });
+  const count = el("p", { class: "muted small" });
+  let limit = TABLE_PAGE;
   const draw = () => {
     const text = filter.value.trim().toLowerCase();
-    body.replaceChildren(...rows.filter((r) => !text || JSON.stringify(r).toLowerCase().includes(text)).slice(0, 400).map(rowFn));
+    const matching = rows.filter((r) => !text || JSON.stringify(r).toLowerCase().includes(text));
+    body.replaceChildren(...matching.slice(0, limit).map(rowFn));
+    const remaining = matching.length - Math.min(limit, matching.length);
+    count.textContent = `Showing ${Math.min(limit, matching.length)} of ${matching.length} row(s)`
+      + (text ? ` matching "${filter.value.trim()}"` : "") + ".";
+    more.textContent = `Show ${Math.min(remaining, TABLE_PAGE)} more (${remaining} not shown)`;
+    more.classList.toggle("hidden", remaining <= 0);
   };
-  filter.addEventListener("input", draw);
+  filter.addEventListener("input", () => { limit = TABLE_PAGE; draw(); });
+  more.addEventListener("click", () => { limit += TABLE_PAGE; draw(); });
   draw();
   return [filter, el("div", { class: "table-wrap" }, el("table", { class: "vcf-filter-table" },
-    el("thead", {}, el("tr", {}, header.map((h) => el("th", {}, h)))), body))];
+    el("thead", {}, el("tr", {}, header.map((h) => el("th", {}, h)))), body)), count, more];
 }
 
 /** The papers retrieved for the Literature agent, best first, with the abstract sentences it was given. */

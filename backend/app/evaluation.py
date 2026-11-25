@@ -304,3 +304,124 @@ def run_evaluation(app, llm=False, cases=None):
             return mlflow.genai.evaluate(data=dataset, predict_fn=make_predict_fn(app, llm), scorers=scorers)
     finally:
         tracking._state["evaluating"] = False
+
+
+# ---------- classification metrics: precision / recall / F1 and confusion matrices (no MLflow needed) ----------
+#
+#   flask --app run eval-metrics      runs stages 1–7 on the mock VCFs and writes docs/evaluation/pipeline_metrics.json,
+#                                     shown in the admin console (Evaluation tab)
+#
+# Two tasks, both scored against CASES (the expected answers above):
+#   1. Drug recommendation (binary). Every labelled drug of a case is a positive (expected on the established track,
+#      not down-ranked) or a negative (resistance: down_ranked; or forbidden). "Predicted positive" = established and
+#      not down-ranked. In a "no approved targeted therapy" case every recommended drug is a false positive. Other
+#      unlabelled recommendations (e.g. amivantamab regimens for EGFR L858R) are listed but not scored: the
+#      expected answers name the guideline drugs, not every acceptable one.
+#   2. Variant tiering (multi-class): expected vs. assigned tier of every labelled variant. Where a case accepts
+#      two tiers (e.g. STK11 Q37* Tier 1 or 2), an accepted answer counts as correct.
+
+METRICS_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                            "docs", "evaluation", "pipeline_metrics.json")
+TIER_LABELS = ["Tier 1", "Tier 2", "Tier 3", "Not tiered"]
+
+
+def drug_rows(outputs, expected):
+    """(scored rows, unscored extra recommendations) for one case."""
+    recommended = {c["drug"].lower(): c["drug"] for c in outputs["established"] if not c["down_ranked"]}
+    labels = {d.lower(): (d, True) for d in expected["established"]}
+    labels.update({d.lower(): (d, False) for d in expected["down_ranked"] + expected["forbidden"]})
+    rows = [{"drug": name, "expected": truth, "predicted": key in recommended} for key, (name, truth) in labels.items()]
+    extras = [name for key, name in recommended.items() if key not in labels]
+    if expected["no_targeted_therapy"]:
+        rows += [{"drug": name, "expected": False, "predicted": True} for name in extras]
+        extras = []
+    return rows, sorted(extras)
+
+
+def tier_rows(outputs, expected):
+    rows = []
+    for variant, tier in expected["tiers"].items():
+        allowed = tier if isinstance(tier, list) else [tier]
+        got = outputs["tiers"].get(variant)
+        truth = got if got in allowed else allowed[0]
+        rows.append({"variant": variant, "expected": f"Tier {truth}",
+                     "predicted": f"Tier {got}" if got else "Not tiered", "accepted": [f"Tier {t}" for t in allowed]})
+    return rows
+
+
+def _ratio(num, den):
+    return round(num / den, 4) if den else None
+
+
+def _f1(precision, recall):
+    return round(2 * precision * recall / (precision + recall), 4) if precision and recall else 0.0
+
+
+def binary_metrics(rows):
+    tp = sum(r["expected"] and r["predicted"] for r in rows)
+    fp = sum(not r["expected"] and r["predicted"] for r in rows)
+    fn = sum(r["expected"] and not r["predicted"] for r in rows)
+    tn = sum(not r["expected"] and not r["predicted"] for r in rows)
+    precision, recall = _ratio(tp, tp + fp), _ratio(tp, tp + fn)
+    return {"n": len(rows), "confusion": {"tp": tp, "fp": fp, "fn": fn, "tn": tn},
+            "precision": precision, "recall": recall, "f1": _f1(precision, recall),
+            "specificity": _ratio(tn, tn + fp), "accuracy": _ratio(tp + tn, len(rows))}
+
+
+def multiclass_metrics(rows, labels=TIER_LABELS):
+    """Confusion matrix (rows = expected, columns = predicted), per-class precision / recall / F1, macro F1."""
+    matrix = [[sum(r["expected"] == e and r["predicted"] == p for r in rows) for p in labels] for e in labels]
+    per_class = {}
+    for i, label in enumerate(labels):
+        tp = matrix[i][i]
+        predicted, actual = sum(row[i] for row in matrix), sum(matrix[i])
+        if not actual and not predicted:
+            continue  # the class does not occur (e.g. nothing is expected to stay untiered)
+        precision, recall = _ratio(tp, predicted), _ratio(tp, actual)
+        per_class[label] = {"support": actual, "precision": precision, "recall": recall,
+                            "f1": _f1(precision or 0, recall or 0)}
+    scored = [v for v in per_class.values() if v["support"]]
+    return {"n": len(rows), "labels": labels, "matrix": matrix, "per_class": per_class,
+            "accuracy": _ratio(sum(matrix[i][i] for i in range(len(labels))), len(rows)),
+            "macro_f1": round(sum(v["f1"] for v in scored) / len(scored), 4) if scored else None}
+
+
+def score_outputs(outputs_by_case):
+    """{example: summarise(...) output} -> the metrics document (pure: no pipeline, no I/O)."""
+    cases, all_drugs, all_tiers = [], [], []
+    for case in CASES:
+        outputs = outputs_by_case.get(case["example"])
+        if outputs is None:
+            continue
+        drugs, extras = drug_rows(outputs, case["expected"])
+        tiers = tier_rows(outputs, case["expected"])
+        all_drugs += drugs
+        all_tiers += tiers
+        cases.append({"example": case["example"], "cancer_type": case["cancer_type"], "drugs": drugs,
+                      "unscored_recommendations": extras, "tiers": tiers,
+                      "drug_metrics": binary_metrics(drugs)["confusion"],
+                      "tiers_correct": sum(r["predicted"] == r["expected"] for r in tiers)})
+    return {"cases": cases, "drug_recommendation": binary_metrics(all_drugs),
+            "variant_tiering": multiclass_metrics(all_tiers)}
+
+
+def run_metrics(cases=None):
+    """Run stages 1–7 (deterministic, no LLM) on the mock VCFs and score them. Needs an app context."""
+    from datetime import datetime, timezone
+
+    from .services.variants.cancer_types import resolve_cancer_type
+    from .services.variants.pipeline import run_pipeline
+    from .services.vcf_explorer import load_example
+
+    outputs = {}
+    for case in CASES:
+        if cases and case["example"] not in cases:
+            continue
+        variants, info, _ = load_example(case["example"])
+        outputs[case["example"]] = summarise(run_pipeline(variants, info, resolve_cancer_type(case["cancer_type"])))
+    result = score_outputs(outputs)
+    cfg = current_app.config
+    result["generated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    result["settings"] = {"qc_min_depth": cfg["VCF_QC_MIN_DEPTH"], "qc_min_vaf": cfg["VCF_QC_MIN_VAF"],
+                          "tier3_min_score": cfg["VCF_TIER3_MIN_SCORE"]}
+    return result

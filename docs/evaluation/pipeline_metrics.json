@@ -1,0 +1,564 @@
+{
+ "cases": [
+  {
+   "example": "mock_luad_egfr_l858r_t790m",
+   "cancer_type": "LUAD",
+   "drugs": [
+    {
+     "drug": "Osimertinib",
+     "expected": true,
+     "predicted": true
+    },
+    {
+     "drug": "Gefitinib",
+     "expected": false,
+     "predicted": false
+    },
+    {
+     "drug": "Erlotinib",
+     "expected": false,
+     "predicted": false
+    },
+    {
+     "drug": "Afatinib",
+     "expected": false,
+     "predicted": false
+    },
+    {
+     "drug": "Sotorasib",
+     "expected": false,
+     "predicted": false
+    },
+    {
+     "drug": "Adagrasib",
+     "expected": false,
+     "predicted": false
+    },
+    {
+     "drug": "Dabrafenib + Trametinib",
+     "expected": false,
+     "predicted": false
+    }
+   ],
+   "unscored_recommendations": [
+    "Amivantamab + Carboplatin + Pemetrexed",
+    "Amivantamab + Chemotherapy",
+    "Amivantamab + Lazertinib",
+    "Chemotherapy + Osimertinib",
+    "Datopotamab Deruxtecan",
+    "Osimertinib + Chemotherapy",
+    "Rociletinib"
+   ],
+   "tiers": [
+    {
+     "variant": "EGFR p.L858R",
+     "expected": "Tier 1",
+     "predicted": "Tier 1",
+     "accepted": [
+      "Tier 1"
+     ]
+    },
+    {
+     "variant": "EGFR p.T790M",
+     "expected": "Tier 1",
+     "predicted": "Tier 1",
+     "accepted": [
+      "Tier 1"
+     ]
+    },
+    {
+     "variant": "STK11 p.Q37*",
+     "expected": "Tier 1",
+     "predicted": "Tier 1",
+     "accepted": [
+      "Tier 1",
+      "Tier 2"
+     ]
+    },
+    {
+     "variant": "TP53 p.R273H",
+     "expected": "Tier 2",
+     "predicted": "Tier 2",
+     "accepted": [
+      "Tier 2"
+     ]
+    },
+    {
+     "variant": "LRP1B p.L1334P",
+     "expected": "Tier 3",
+     "predicted": "Tier 3",
+     "accepted": [
+      "Tier 3"
+     ]
+    }
+   ],
+   "drug_metrics": {
+    "tp": 1,
+    "fp": 0,
+    "fn": 0,
+    "tn": 6
+   },
+   "tiers_correct": 5
+  },
+  {
+   "example": "mock_luad_egfr_t790m_c797s",
+   "cancer_type": "LUAD",
+   "drugs": [
+    {
+     "drug": "Osimertinib",
+     "expected": false,
+     "predicted": false
+    },
+    {
+     "drug": "Gefitinib",
+     "expected": false,
+     "predicted": false
+    },
+    {
+     "drug": "Erlotinib",
+     "expected": false,
+     "predicted": false
+    }
+   ],
+   "unscored_recommendations": [
+    "Amivantamab + Carboplatin + Pemetrexed",
+    "Amivantamab + Chemotherapy",
+    "Amivantamab + Lazertinib",
+    "Datopotamab Deruxtecan",
+    "Rociletinib"
+   ],
+   "tiers": [
+    {
+     "variant": "EGFR p.L858R",
+     "expected": "Tier 1",
+     "predicted": "Tier 1",
+     "accepted": [
+      "Tier 1"
+     ]
+    },
+    {
+     "variant": "EGFR p.T790M",
+     "expected": "Tier 1",
+     "predicted": "Tier 1",
+     "accepted": [
+      "Tier 1"
+     ]
+    },
+    {
+     "variant": "EGFR p.C797S",
+     "expected": "Tier 1",
+     "predicted": "Tier 1",
+     "accepted": [
+      "Tier 1"
+     ]
+    },
+    {
+     "variant": "TP53 p.R273H",
+     "expected": "Tier 2",
+     "predicted": "Tier 2",
+     "accepted": [
+      "Tier 2"
+     ]
+    }
+   ],
+   "drug_metrics": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "tn": 3
+   },
+   "tiers_correct": 4
+  },
+  {
+   "example": "mock_luad_egfr_exon19del",
+   "cancer_type": "LUAD",
+   "drugs": [
+    {
+     "drug": "Osimertinib",
+     "expected": true,
+     "predicted": true
+    },
+    {
+     "drug": "Gefitinib",
+     "expected": true,
+     "predicted": true
+    },
+    {
+     "drug": "Erlotinib",
+     "expected": true,
+     "predicted": true
+    },
+    {
+     "drug": "Afatinib",
+     "expected": true,
+     "predicted": true
+    },
+    {
+     "drug": "Sotorasib",
+     "expected": false,
+     "predicted": false
+    },
+    {
+     "drug": "Dabrafenib + Trametinib",
+     "expected": false,
+     "predicted": false
+    }
+   ],
+   "unscored_recommendations": [
+    "Amivantamab + Carboplatin + Pemetrexed",
+    "Amivantamab + Chemotherapy",
+    "Amivantamab + Lazertinib",
+    "Chemotherapy + Osimertinib",
+    "Dacomitinib",
+    "Datopotamab Deruxtecan",
+    "Erlotinib + Ramucirumab",
+    "Osimertinib + Chemotherapy"
+   ],
+   "tiers": [
+    {
+     "variant": "EGFR p.E746_A750del",
+     "expected": "Tier 1",
+     "predicted": "Tier 1",
+     "accepted": [
+      "Tier 1"
+     ]
+    },
+    {
+     "variant": "TP53 p.R175H",
+     "expected": "Tier 2",
+     "predicted": "Tier 2",
+     "accepted": [
+      "Tier 2"
+     ]
+    },
+    {
+     "variant": "CDKN2A p.R80*",
+     "expected": "Tier 2",
+     "predicted": "Tier 2",
+     "accepted": [
+      "Tier 2"
+     ]
+    }
+   ],
+   "drug_metrics": {
+    "tp": 4,
+    "fp": 0,
+    "fn": 0,
+    "tn": 2
+   },
+   "tiers_correct": 3
+  },
+  {
+   "example": "mock_luad_kras_g12c",
+   "cancer_type": "LUAD",
+   "drugs": [
+    {
+     "drug": "Sotorasib",
+     "expected": true,
+     "predicted": true
+    },
+    {
+     "drug": "Adagrasib",
+     "expected": true,
+     "predicted": true
+    },
+    {
+     "drug": "Gefitinib",
+     "expected": false,
+     "predicted": false
+    },
+    {
+     "drug": "Erlotinib",
+     "expected": false,
+     "predicted": false
+    },
+    {
+     "drug": "Osimertinib",
+     "expected": false,
+     "predicted": false
+    }
+   ],
+   "unscored_recommendations": [
+    "Daraxonrasib",
+    "Divarasib"
+   ],
+   "tiers": [
+    {
+     "variant": "KRAS p.G12C",
+     "expected": "Tier 1",
+     "predicted": "Tier 1",
+     "accepted": [
+      "Tier 1"
+     ]
+    },
+    {
+     "variant": "STK11 p.Q37*",
+     "expected": "Tier 1",
+     "predicted": "Tier 1",
+     "accepted": [
+      "Tier 1",
+      "Tier 2"
+     ]
+    },
+    {
+     "variant": "KEAP1 p.G333C",
+     "expected": "Tier 2",
+     "predicted": "Tier 2",
+     "accepted": [
+      "Tier 2",
+      "Tier 3"
+     ]
+    }
+   ],
+   "drug_metrics": {
+    "tp": 2,
+    "fp": 0,
+    "fn": 0,
+    "tn": 3
+   },
+   "tiers_correct": 3
+  },
+  {
+   "example": "mock_luad_braf_v600e",
+   "cancer_type": "LUAD",
+   "drugs": [
+    {
+     "drug": "Dabrafenib + Trametinib",
+     "expected": true,
+     "predicted": true
+    },
+    {
+     "drug": "Osimertinib",
+     "expected": false,
+     "predicted": false
+    },
+    {
+     "drug": "Sotorasib",
+     "expected": false,
+     "predicted": false
+    }
+   ],
+   "unscored_recommendations": [
+    "Encorafenib + Binimetinib"
+   ],
+   "tiers": [
+    {
+     "variant": "BRAF p.V600E",
+     "expected": "Tier 1",
+     "predicted": "Tier 1",
+     "accepted": [
+      "Tier 1"
+     ]
+    },
+    {
+     "variant": "TP53 p.R248Q",
+     "expected": "Tier 2",
+     "predicted": "Tier 2",
+     "accepted": [
+      "Tier 2"
+     ]
+    }
+   ],
+   "drug_metrics": {
+    "tp": 1,
+    "fp": 0,
+    "fn": 0,
+    "tn": 2
+   },
+   "tiers_correct": 2
+  },
+  {
+   "example": "mock_lusc_no_targeted",
+   "cancer_type": "LUSC",
+   "drugs": [
+    {
+     "drug": "Alpelisib + Fulvestrant",
+     "expected": false,
+     "predicted": false
+    }
+   ],
+   "unscored_recommendations": [],
+   "tiers": [
+    {
+     "variant": "TP53 p.R248Q",
+     "expected": "Tier 2",
+     "predicted": "Tier 2",
+     "accepted": [
+      "Tier 2"
+     ]
+    },
+    {
+     "variant": "PIK3CA p.E545K",
+     "expected": "Tier 2",
+     "predicted": "Tier 2",
+     "accepted": [
+      "Tier 2"
+     ]
+    },
+    {
+     "variant": "NFE2L2 p.R34G",
+     "expected": "Tier 2",
+     "predicted": "Tier 2",
+     "accepted": [
+      "Tier 2"
+     ]
+    },
+    {
+     "variant": "CDKN2A p.R80*",
+     "expected": "Tier 2",
+     "predicted": "Tier 2",
+     "accepted": [
+      "Tier 2"
+     ]
+    }
+   ],
+   "drug_metrics": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "tn": 1
+   },
+   "tiers_correct": 4
+  },
+  {
+   "example": "mock_sclc_tp53_rb1",
+   "cancer_type": "SCLC",
+   "drugs": [],
+   "unscored_recommendations": [],
+   "tiers": [
+    {
+     "variant": "TP53 p.R273H",
+     "expected": "Tier 2",
+     "predicted": "Tier 2",
+     "accepted": [
+      "Tier 2"
+     ]
+    },
+    {
+     "variant": "RB1 p.R320*",
+     "expected": "Tier 1",
+     "predicted": "Tier 1",
+     "accepted": [
+      "Tier 1",
+      "Tier 2"
+     ]
+    }
+   ],
+   "drug_metrics": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "tn": 0
+   },
+   "tiers_correct": 2
+  },
+  {
+   "example": "mock_luad_tier3_only",
+   "cancer_type": "LUAD",
+   "drugs": [],
+   "unscored_recommendations": [],
+   "tiers": [
+    {
+     "variant": "KEAP1 p.R413L",
+     "expected": "Tier 3",
+     "predicted": "Tier 3",
+     "accepted": [
+      "Tier 3"
+     ]
+    },
+    {
+     "variant": "LRP1B p.L1334P",
+     "expected": "Tier 3",
+     "predicted": "Tier 3",
+     "accepted": [
+      "Tier 3"
+     ]
+    }
+   ],
+   "drug_metrics": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 0,
+    "tn": 0
+   },
+   "tiers_correct": 2
+  }
+ ],
+ "drug_recommendation": {
+  "n": 25,
+  "confusion": {
+   "tp": 8,
+   "fp": 0,
+   "fn": 0,
+   "tn": 17
+  },
+  "precision": 1.0,
+  "recall": 1.0,
+  "f1": 1.0,
+  "specificity": 1.0,
+  "accuracy": 1.0
+ },
+ "variant_tiering": {
+  "n": 25,
+  "labels": [
+   "Tier 1",
+   "Tier 2",
+   "Tier 3",
+   "Not tiered"
+  ],
+  "matrix": [
+   [
+    11,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    11,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    3,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    0
+   ]
+  ],
+  "per_class": {
+   "Tier 1": {
+    "support": 11,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0
+   },
+   "Tier 2": {
+    "support": 11,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0
+   },
+   "Tier 3": {
+    "support": 3,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0
+   }
+  },
+  "accuracy": 1.0,
+  "macro_f1": 1.0
+ },
+ "generated_at": "2026-11-24T09:42:12+00:00",
+ "settings": {
+  "qc_min_depth": 20,
+  "qc_min_vaf": 0.05,
+  "tier3_min_score": 0.4
+ }
+}

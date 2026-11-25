@@ -4,7 +4,7 @@ from io import BytesIO
 
 from flask import Blueprint, jsonify, request, send_file
 
-from ..accounts import current_user
+from ..accounts import check_access, has_patient_data, require_login
 from ..errors import APIError
 from ..extensions import db
 from ..models import Query, iso
@@ -48,6 +48,9 @@ def explore():
     turned into CPIC phenotypes and recommendations."""
     body = request.get_json(silent=True) or {}
     entity_type = body.get("entity_type") or "gene"
+    medications, genotypes = parse_medications(body.get("medications")), parse_genotypes(body.get("genotypes"))
+    if medications or genotypes:
+        require_login()
     query = run_exploration(
         body.get(entity_type) if entity_type in ("gene", "drug") else None,
         body.get("relation_types"),
@@ -55,21 +58,19 @@ def explore():
         followup_question=body.get("followup_question"),
         confirm_unresolved=bool(body.get("confirm_unresolved")),
         entity_type=entity_type,
-        medications=parse_medications(body.get("medications")),
-        genotypes=parse_genotypes(body.get("genotypes")),
+        medications=medications,
+        genotypes=genotypes,
     )
     return _query_response(query, 201)
 
 
 @bp.get("/queries")
 def list_queries():
-    """Recent queries; ?mine=1 limits them to the logged-in user's own (the query history page)."""
+    """The logged-in user's recent queries (the query history page); an admin may leave out ?mine=1 to list everyone's."""
     limit = min(request.args.get("limit", 20, type=int), 100)
     stmt = db.select(Query).order_by(Query.id.desc()).limit(limit)
-    if request.args.get("mine"):
-        user = current_user()
-        if not user:
-            raise APIError("Log in to see your query history", 401)
+    user = require_login("Log in to see your query history")
+    if request.args.get("mine") or not user.is_admin:
         stmt = stmt.where(Query.user_id == user.id)
     queries = db.session.scalars(stmt).all()
     return jsonify([_summary(q) for q in queries])
@@ -85,13 +86,15 @@ def _summary(query):
 
 @bp.get("/queries/<int:query_id>")
 def get_query(query_id):
-    return _query_response(db.get_or_404(Query, query_id))
+    return _query_response(check_access(db.get_or_404(Query, query_id)))
 
 
 @bp.post("/queries/<int:query_id>/ask")
 def ask_again(query_id):
     """Re-ask / follow-up. Reuses the parent's evidence when the gene and relation types are unchanged."""
-    parent = db.get_or_404(Query, query_id)
+    parent = check_access(db.get_or_404(Query, query_id))
+    if has_patient_data(parent):
+        require_login()
     body = request.get_json(silent=True) or {}
     if parent.entity_type == "vcf":
         query = run_vcf_followup(parent, body.get("followup_question"), bool(body.get("compare")))
@@ -111,7 +114,7 @@ def ask_again(query_id):
 def report_docx(query_id):
     """The query as a Word report (services/report_docx.py). POST {figure: PNG data URL of the network,
     figure_shown, figure_total} adds the network as Figure 1; GET gives the report without it."""
-    query = db.get_or_404(Query, query_id)
+    query = check_access(db.get_or_404(Query, query_id))
     if query.status != "complete" or not query.evidence:
         raise APIError("This search has no results to report")
     figure, note = None, None

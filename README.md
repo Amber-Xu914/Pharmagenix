@@ -328,6 +328,16 @@ cd backend && .venv/bin/flask --app run mlflow-eval --case mock_luad_kras_g12c  
 | `report_citations_valid` (`--llm`) | the analysis report cites evidence, and only IDs it was given |
 | `agent_statements_grounded` (`--llm`) | every exploration-agent statement cites evidence or is a hypothesis |
 
+Precision, recall, F1 and confusion matrices (drug recommendation as a binary task, variant tiering as a multi-class
+one) come from a separate command that needs no MLflow. It writes `docs/evaluation/pipeline_metrics.json`, which the
+admin console shows under **Evaluation**:
+
+```bash
+cd backend && .venv/bin/flask --app run eval-metrics                 # a few minutes, no LLM cost
+```
+
+The automated tests and the expected and actual results of the key scenarios are in [docs/TESTING.md](docs/TESTING.md).
+
 In the MLflow UI, experiment `pharmagenix-vcf`:
 
 - **Datasets**: `pharmagenix-vcf-cases`, the inputs and expected answers.
@@ -401,6 +411,9 @@ cd backend && .venv/bin/flask --app run mlflow-eval --case mock_luad_kras_g12c
  
 ## API reference
 
+Every `POST` must send the session's CSRF token in the `X-CSRF-Token` header (`frontend/js/api.js` does this;
+see `backend/app/csrf.py`). Requests authenticated with the `X-Admin-Token` header are exempt.
+
 | Method   | Path                                      | Description                                                                                                           |
 | -------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | GET      | `/api/meta`                               | Relationship types, model info, imported reference data versions                                                      |
@@ -408,13 +421,14 @@ cd backend && .venv/bin/flask --app run mlflow-eval --case mock_luad_kras_g12c
 | GET      | `/api/vcf/options`                        | Workflow 4 form: lung cancer types (OncoTree), the synthetic mock VCFs, QC thresholds                                 |
 | GET      | `/api/vcf/examples/<id>`                  | Download one mock VCF                                                                                                  |
 | POST     | `/api/vcf/explore`                        | Multipart `file` (VCF / VCF.gz), `cancer_type`, `test_data=1`, `compare`; or JSON `{example, cancer_type, compare}`   |
-| GET      | `/api/queries[?mine=1]`                   | Recent queries; `mine=1` = the logged-in user's own history (401 when logged out)                                     |
-| GET      | `/api/queries/<id>`                       | Fetch the full result of a past query, plus `entity_details` (HGNC / ChEMBL fields for the results header)            |
+| GET      | `/api/queries[?mine=1]`                   | The logged-in user's recent queries (401 when logged out); an admin without `mine=1` sees everyone's                  |
+| GET      | `/api/queries/<id>`                       | A past query's full result and `entity_details`; one with patient data only for its owner or an admin (401 / 403)    |
 | POST     | `/api/queries/<id>/ask`                   | Follow-up / re-ask `{followup_question, compare}`; reuses the evidence when the gene and relation types are unchanged  |
 | POST     | `/api/reports/<id>/feedback`              | `{rating 1–5, comment, suggestion}`                                                                                   |
 | POST     | `/api/auth/register`, `/api/auth/login`   | `{email, password}` (email only, case-insensitive); sets a signed session cookie                                      |
 | POST     | `/api/auth/logout`                        | Clear the session                                                                                                     |
 | GET      | `/api/auth/me`                            | The signed-in user, or `null`                                                                                         |
+| GET      | `/api/auth/csrf`                          | The session's CSRF token (also in the `X-CSRF-Token` header of every `/api/` response)                                |
 | GET      | `/api/admin/prompt-logs[/<id>]`           | Prompt logs (filter by status / provider)                                                                             |
 | GET/POST | `/api/admin/templates`                    | List templates / save a new version                                                                                   |
 | POST     | `/api/admin/templates/<id>/activate`      | Switch the active template                                                                                            |
@@ -422,6 +436,7 @@ cd backend && .venv/bin/flask --app run mlflow-eval --case mock_luad_kras_g12c
 | GET      | `/api/admin/failures`                     | Failed and flagged reports                                                                                            |
 | POST     | `/api/admin/reports/<id>/retry`           | Regenerate with the current template                                                                                  |
 | GET      | `/api/admin/feedback`, `/api/admin/stats` | User feedback; per-model success rate, latency and average rating                                                     |
+| GET      | `/api/admin/evaluation`                   | Workflow 4 precision / recall / F1 and confusion matrices, as saved by `flask --app run eval-metrics`                  |
 
 ## Things to check and known limitations
 

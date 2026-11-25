@@ -2,6 +2,7 @@
 
 from flask import Blueprint, current_app, jsonify, request, send_file
 
+from ..accounts import current_user, require_login
 from ..errors import APIError
 from ..reference.lookup import latest_releases
 from ..services.vcf_explorer import load_example, mock_examples, mock_path, read_upload, run_vcf_exploration
@@ -14,14 +15,27 @@ from .explore import _query_response
 bp = Blueprint("vcf", __name__)
 
 
+def _is_admin():
+    user = current_user()
+    return bool(user and user.is_admin)
+
+
+def require_admin_for_examples():
+    """The synthetic examples are for administrators (demos, evaluation); other users upload their own VCF."""
+    require_login("Log in to use the synthetic examples")
+    if not _is_admin():
+        raise APIError("The synthetic examples are available to administrators only; please upload a VCF", 403)
+
+
 @bp.get("/options")
 def options():
-    """What the VCF form needs: lung cancer types, the synthetic mock VCFs and the QC thresholds."""
+    """What the VCF form needs: lung cancer types, the QC thresholds and (administrators only) the synthetic mock
+    VCFs."""
     cfg = current_app.config
     releases = latest_releases()
     return jsonify(
         cancer_types=lung_types(),
-        examples=mock_examples(),
+        examples=mock_examples() if _is_admin() else [],
         oncokb_enabled=bool(cfg["ONCOKB_API_TOKEN"]),
         ready=all(s in releases for s in ("civic", "intogen", "hotspots")),
         max_bytes=cfg["MAX_VCF_BYTES"],
@@ -33,7 +47,8 @@ def options():
 
 @bp.get("/examples/<example_id>")
 def download_example(example_id):
-    """The mock VCF itself, so users can see what the test data looks like."""
+    """The mock VCF itself, so administrators can see what the test data looks like."""
+    require_admin_for_examples()
     example, path = mock_path(example_id)
     return send_file(path, mimetype="text/plain", as_attachment=True, download_name=example["file"])
 
@@ -43,7 +58,9 @@ def explore():
     """Multipart upload (file, cancer_type, test_data, compare, medications) or JSON {example, cancer_type, compare,
     medications, clinical}. medications: the patient's current medications (list, or comma-separated), checked for
     drug–drug interactions with the candidates. clinical: optional context (stage, treatment, age, sex, smoking,
-    purity, ecog, brain_mets, notes; form fields "clinical_<key>"), shown in the report and given to the agents."""
+    purity, ecog, brain_mets, notes; form fields "clinical_<key>"), shown in the report and given to the agents.
+    Needs a logged-in account: the result is private to it."""
+    require_login("Log in to analyse a patient VCF")
     if request.files:
         upload = request.files.get("file")
         if upload is None:
@@ -61,6 +78,7 @@ def explore():
         body = request.get_json(silent=True) or {}
         if not body.get("example"):
             raise APIError("Upload a VCF, or choose one of the synthetic examples")
+        require_admin_for_examples()
         variants, info, example = load_example(body["example"])
         cancer_type = body.get("cancer_type") or example["cancer_type"]
         compare = bool(body.get("compare"))
@@ -73,6 +91,7 @@ def explore():
 def ism():
     """AlphaGenome in-silico mutagenesis heatmap around one QC-passed variant.
     JSON {chrom, pos, ref?, alt?, gene?, assembly?}; slow (tens of seconds), so the page asks for it on demand."""
+    require_login("Log in to compute the heatmap")
     body = request.get_json(silent=True) or {}
     if body.get("chrom") is None or body.get("pos") is None:
         raise APIError("chrom and pos are required")
