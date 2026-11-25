@@ -11,6 +11,8 @@ from app.services.interactions import drug_interaction_rows
 from app.services.safety import check_interactions, parse_medications, resolve_drug, warning_summary
 from app.services.workflow.evidence import grade
 
+from .conftest import log_in
+
 FDA_PAGE = """<main><table><tr><th>Drug or Other Substance</th><th>CYP Strg INH</th><th>CYP Mod INH</th>
 <th>CYP WK INH</th><th>CYP Strg IND</th><th>CYP Mod IND</th><th>CYP WK IND</th><th>CYP SENS SUB</th>
 <th>CYP Mod SENS SUB</th><th>TRNSP INH</th><th>TRNSP SUB</th></tr>
@@ -151,5 +153,8 @@ def test_explore_passes_current_medications(client, fake_sources, monkeypatch):
         return real(*args, medications=medications, **kwargs)
 
     monkeypatch.setattr("app.services.explorer.collect_evidence", recording)
-    resp = client.post("/api/explore", json={"gene": "CYP2C19", "medications": "omeprazole, fluoxetine"})
+    body = {"gene": "CYP2C19", "medications": "omeprazole, fluoxetine"}
+    assert client.post("/api/explore", json=body).status_code == 401  # patient data needs an account
+    log_in(client)
+    resp = client.post("/api/explore", json=body)
     assert resp.status_code == 201 and seen["medications"] == ["omeprazole", "fluoxetine"]

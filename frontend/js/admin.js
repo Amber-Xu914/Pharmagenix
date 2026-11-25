@@ -13,6 +13,7 @@ const templatesRequest = latestOnly();
 const failuresRequest = latestOnly();
 const feedbackRequest = latestOnly();
 const statsRequest = latestOnly();
+const evaluationRequest = latestOnly();
 
 // ---------- Login ----------
 
@@ -42,7 +43,8 @@ $("login-form").addEventListener("submit", async (event) => {
 
 // ---------- Tabs ----------
 
-const loaders = { logs: loadLogs, templates: loadTemplates, failures: loadFailures, feedback: loadFeedback, stats: loadStats };
+const loaders = { logs: loadLogs, templates: loadTemplates, failures: loadFailures, feedback: loadFeedback, stats: loadStats,
+  evaluation: loadEvaluation };
 
 function showTab(name) {
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
@@ -149,12 +151,19 @@ function templateBody() {
 
 $("template-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  // Each save creates a new version: the button stays disabled until the answer arrives, so a double click
+  // can't save the same template twice.
+  const button = event.submitter || $("template-form").querySelector("button[type=submit]");
+  if (button.disabled) return;
+  button.disabled = true;
   try {
     const created = await admin.createTemplate({ ...templateBody(), activate: $("tpl-activate").checked });
     $("tpl-message").textContent = `Saved ${created.name} v${created.version}${created.is_active ? " (now active)" : ""}`;
     loadTemplates();
   } catch (err) {
     $("tpl-message").textContent = `Could not save: ${err.message}`;
+  } finally {
+    button.disabled = false;
   }
 });
 
@@ -243,6 +252,83 @@ async function loadStats() {
       return stat(`Reference data: ${source.toUpperCase()}`, r ? "Loaded" : "Not imported",
         r ? `${r.version} · imported ${formatDate(r.imported_at)}` : "Run: flask --app run import-data");
     }));
+}
+
+// ---------- Evaluation ----------
+// Workflow 4 on the 8 mock VCFs against their expected answers (backend/app/evaluation.py, `flask --app run
+// eval-metrics`): drug recommendation as a binary classifier and variant tiering as a multi-class one.
+
+const pct = (x) => (x == null ? "–" : `${Math.round(x * 1000) / 10}%`);
+
+function confusionTable(labels, matrix, caption) {
+  return el("div", { class: "table-wrap" }, el("table", { class: "confusion" },
+    el("caption", {}, caption),
+    el("thead", {}, el("tr", {}, el("th", {}, "Expected ↓ / Predicted →"), labels.map((l) => el("th", {}, l)))),
+    el("tbody", {}, matrix.map((row, i) => el("tr", {}, el("th", {}, labels[i]),
+      row.map((n, j) => el("td", { class: !n ? "" : i === j ? "hit" : "miss" }, String(n))))))));
+}
+
+async function loadEvaluation() {
+  const isLatest = evaluationRequest();
+  const box = $("evaluation");
+  let e;
+  try {
+    e = await admin.evaluation();
+  } catch (err) {
+    box.replaceChildren(el("p", { class: "muted" }, err.message));
+    return;
+  }
+  if (!isLatest()) return;
+  const d = e.drug_recommendation;
+  const t = e.variant_tiering;
+  const c = d.confusion;
+  const stat = (label, value, sub) =>
+    el("div", { class: "stat" }, el("div", { class: "muted small" }, label), el("div", { class: "num" }, value),
+      el("div", { class: "small muted" }, sub));
+  box.replaceChildren(
+    el("p", { class: "small muted" }, `Workflow 4 (QC, tiering, drug tracks; no LLM) on ${e.cases.length} synthetic `
+      + `mock VCFs, scored against expected answers from CIViC, FDA labels and NCCN. Run ${formatDate(e.generated_at)} `
+      + "with flask --app run eval-metrics."),
+    el("h3", {}, "Drug recommendation (binary)"),
+    el("p", { class: "small muted" }, "Positive = the drug is recommended (established track, not down-ranked). "
+      + "Each case's guideline drugs are positives; drugs with resistance or from QC artefacts are negatives."),
+    el("div", { class: "stat-grid" },
+      stat("Precision", pct(d.precision), `TP ${c.tp} / (TP + FP ${c.fp})`),
+      stat("Recall (sensitivity)", pct(d.recall), `TP ${c.tp} / (TP + FN ${c.fn})`),
+      stat("F1-score", pct(d.f1), "harmonic mean of precision and recall"),
+      stat("Specificity", pct(d.specificity), `TN ${c.tn} / (TN + FP ${c.fp})`),
+      stat("Accuracy", pct(d.accuracy), `${c.tp + c.tn} of ${d.n} labelled drugs`)),
+    confusionTable(["Recommended", "Not recommended"], [[c.tp, c.fn], [c.fp, c.tn]],
+      `Confusion matrix: drug recommendation (n = ${d.n})`),
+    el("h3", {}, "Variant tiering (multi-class)"),
+    el("p", { class: "small muted" }, `Accuracy ${pct(t.accuracy)} · macro F1 ${pct(t.macro_f1)} over ${t.n} labelled `
+      + "variants. Where a case accepts two tiers (e.g. STK11 Q37* Tier 1 or 2), an accepted tier counts as correct."),
+    confusionTable(t.labels, t.matrix, `Confusion matrix: variant tier (n = ${t.n})`),
+    el("div", { class: "table-wrap" }, el("table", {},
+      el("thead", {}, el("tr", {}, ["Class", "Support", "Precision", "Recall", "F1"].map((h) => el("th", {}, h)))),
+      el("tbody", {}, Object.entries(t.per_class).map(([label, m]) => el("tr", {},
+        el("td", {}, label), el("td", {}, m.support), el("td", {}, pct(m.precision)), el("td", {}, pct(m.recall)),
+        el("td", {}, pct(m.f1))))))),
+    el("h3", {}, "Per case"),
+    el("div", { class: "table-wrap" }, el("table", {},
+      el("thead", {}, el("tr", {}, ["Mock VCF", "Cancer", "Drugs TP / FP / FN / TN", "Tiers correct",
+        "Other recommendations (not scored)"].map((h) => el("th", {}, h)))),
+      el("tbody", {}, e.cases.map((x) => el("tr", {},
+        el("td", {}, x.example), el("td", {}, x.cancer_type),
+        el("td", {}, `${x.drug_metrics.tp} / ${x.drug_metrics.fp} / ${x.drug_metrics.fn} / ${x.drug_metrics.tn}`),
+        el("td", {}, `${x.tiers_correct} / ${x.tiers.length}`),
+        el("td", { class: "small" }, x.unscored_recommendations.join(", ") || "–")))))),
+    el("h3", {}, "Reliability and limitations"),
+    el("ul", { class: "small" },
+      el("li", {}, "Small test set: 8 synthetic cases, 25 labelled drugs and 25 labelled variants. A perfect score "
+        + "shows the rules behave as designed on these cases; it does not estimate accuracy on real patients."),
+      el("li", {}, "The expected answers were written by the team from CIViC, FDA labels and NCCN, not by an "
+        + "independent clinical panel, and the same cases were used while building the rules (no held-out set)."),
+      el("li", {}, "Only labelled drugs are scored. Other recommendations (listed above) may be correct but are not "
+        + "counted, so precision covers the guideline drugs, not every drug the system shows."),
+      el("li", {}, "Fusions, copy-number changes and PD-L1 are outside the pipeline, so cases that depend on them "
+        + "(e.g. ALK, ROS1, MET amplification) are not represented.")),
+  );
 }
 
 // ---------- Boot ----------

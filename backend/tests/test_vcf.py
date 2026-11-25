@@ -22,6 +22,8 @@ from app.services.variants.cancer_types import oncokb_in_subtype
 from app.services.variants.parse import parse_maf, parse_upload, parse_vcf, short_protein
 from app.services.vcf_explorer import load_example, mock_examples
 
+from .conftest import log_in
+
 # What Ensembl VEP returns for the mock VCFs' variants (GRCh38), keyed by (chrom, pos).
 VEP = {
     ("7", 55191822): ("EGFR", "missense_variant", "missense", "L858R", 21, {"alphamissense": 0.997}),
@@ -40,6 +42,13 @@ VEP = {
     ("12", 25245351): ("KRAS", "missense_variant", "missense", "G12C", 2, {"alphamissense": 0.99}),
     ("19", 10491905): ("KEAP1", "missense_variant", "missense", "G333C", 3, {"alphamissense": 0.95}),
 }
+
+
+@pytest.fixture(autouse=True)
+def _logged_in(request):
+    """The tests run the synthetic examples, which need an administrator: log the test client in as one."""
+    if "client" in request.fixturenames:
+        log_in(request.getfixturevalue("client"), admin=True)
 
 
 def civic_row(eid, profile, therapies, significance, level, disease="Lung Non-small Cell Carcinoma", doid="3908",

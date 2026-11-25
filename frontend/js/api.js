@@ -1,17 +1,54 @@
 // Set window.DGI_API_BASE (e.g. "http://localhost:5000") if the frontend is served separately from Flask.
 const API_BASE = window.DGI_API_BASE || "";
 
+// CSRF protection (backend/app/csrf.py): every state-changing request carries the session's token in X-CSRF-Token.
+// Every /api/ response sends the current token back (it changes when the user logs in or out), so it is kept here.
+const UNSAFE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+let csrfToken = null;
+
+function keepCsrfToken(resp) {
+  const token = resp.headers.get("X-CSRF-Token");
+  if (token) csrfToken = token;
+}
+
+async function ensureCsrfToken(fresh = false) {
+  if (csrfToken && !fresh) return csrfToken;
+  const resp = await fetch(`${API_BASE}/api/auth/csrf`, { credentials: "same-origin" });
+  keepCsrfToken(resp);
+  return csrfToken;
+}
+
+/** fetch() with the CSRF token added; a 403 "csrf" answer (e.g. the session expired) is retried once with a new token. */
+async function send(method, path, options) {
+  const unsafe = UNSAFE.has(method);
+  for (let attempt = 0; ; attempt++) {
+    const headers = { ...options.headers };
+    if (unsafe) headers["X-CSRF-Token"] = await ensureCsrfToken(attempt > 0);
+    const resp = await fetch(API_BASE + path, { ...options, method, headers, credentials: "same-origin" });
+    keepCsrfToken(resp);
+    if (unsafe && attempt === 0 && resp.status === 403) {
+      const data = await resp.clone().json().catch(() => ({}));
+      if (data.code === "csrf") continue;
+    }
+    return resp;
+  }
+}
+
 async function request(method, path, { body, form, headers = {} } = {}) {
-  const options = { method, headers: { ...headers } };
+  const options = { headers: { ...headers } };
   if (form) {
     options.body = form;
   } else if (body !== undefined) {
     options.headers["Content-Type"] = "application/json";
     options.body = JSON.stringify(body);
   }
-  const resp = await fetch(API_BASE + path, options);
+  const resp = await send(method, path, options);
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
+    // 401: the action needs an account (patient data) or the session has ended; auth.js opens the login panel.
+    if (resp.status === 401 && !path.startsWith("/api/auth/")) {
+      document.dispatchEvent(new CustomEvent("auth:required", { detail: data.error }));
+    }
     // The body travels with the error, e.g. the suggestions when an entity needs confirming (HTTP 422).
     throw Object.assign(new Error(data.error || `HTTP ${resp.status}`), { status: resp.status, data });
   }
@@ -20,8 +57,8 @@ async function request(method, path, { body, form, headers = {} } = {}) {
 
 /** A file download (the Word report): the blob and the file name the server gave it. */
 async function download(method, path, body) {
-  const resp = await fetch(API_BASE + path, {
-    method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body),
+  const resp = await send(method, path, {
+    headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!resp.ok) {
     const data = await resp.json().catch(() => ({}));
@@ -67,5 +104,6 @@ export function adminApi(token) {
     retry: (reportId) => post(`/reports/${reportId}/retry`),
     feedback: (params) => get("/feedback", params),
     stats: () => get("/stats"),
+    evaluation: () => get("/evaluation"),
   };
 }

@@ -11,6 +11,8 @@ from app.reference.models import (
 from app.services import genotypes as G
 from app.services.prompts import format_evidence_item, format_pair, genotypes_block
 
+from .conftest import log_in
+
 CLOPIDOGREL_PM = "Avoid standard dose clopidogrel if possible. Use prasugrel or ticagrelor at standard dose."
 
 
@@ -127,7 +129,10 @@ def test_explore_passes_genotypes(client, fake_sources, monkeypatch):
         return real(*args, genotypes=genotypes, **kwargs)
 
     monkeypatch.setattr("app.services.explorer.collect_evidence", recording)
-    resp = client.post("/api/explore", json={"gene": "CYP2C19", "genotypes": "CYP2C19 *2/*2; HLA-B*57:01 negative"})
+    body = {"gene": "CYP2C19", "genotypes": "CYP2C19 *2/*2; HLA-B*57:01 negative"}
+    assert client.post("/api/explore", json=body).status_code == 401  # patient data needs an account
+    log_in(client)
+    resp = client.post("/api/explore", json=body)
     assert resp.status_code == 201
     assert seen["genotypes"] == [{"gene": "CYP2C19", "value": "*2/*2"}, {"gene": "HLA-B", "value": "*57:01 negative"}]
     bad = client.post("/api/explore", json={"gene": "CYP2C19", "genotypes": "nonsense"})

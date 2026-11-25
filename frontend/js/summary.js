@@ -177,9 +177,12 @@ function feedbackForm(report) {
     };
     submit.disabled = true;
     try {
-      const { report: updated } = await api.feedback(report.id, body);
-      summary.textContent = `Thanks for your feedback! ${updated.feedback_count} ratings, average ${updated.avg_rating ?? "–"}`;
-      comment.value = suggestion.value = "";
+      // One rating per person: sending again updates it (backend/app/routes/feedback.py), so the fields keep what
+      // was saved and the button says so.
+      const { report: updated, updated: replaced } = await api.feedback(report.id, body);
+      summary.textContent = `${replaced ? "Your feedback was updated." : "Thanks for your feedback!"} `
+        + `${updated.feedback_count} ratings, average ${updated.avg_rating ?? "–"}`;
+      submit.textContent = "Update feedback";
     } catch (err) {
       summary.textContent = `Could not submit: ${err.message}`;
     } finally {

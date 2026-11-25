@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from ..accounts import current_user
+from ..csrf import csrf_token
 from ..errors import APIError
 from ..extensions import db
 from ..models import User, utcnow
@@ -71,6 +72,12 @@ def login():
 def logout():
     session.clear()
     return jsonify(ok=True)
+
+
+@bp.get("/csrf")
+def csrf():
+    """The session's CSRF token (also sent in the X-CSRF-Token header of every /api/ response)."""
+    return jsonify(csrf_token=csrf_token())
 
 
 @bp.get("/me")

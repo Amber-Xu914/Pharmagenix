@@ -7,7 +7,15 @@ from app import create_app, tracking
 from app.config import TestConfig
 from app.extensions import db
 
+from .conftest import BrowserClient, log_in
 from .test_vcf import FakeLLM, stub_live, vcf_reference  # noqa: F401 - fixtures
+
+
+@pytest.fixture(autouse=True)
+def _logged_in(request):
+    """The tests run the synthetic examples, which need an administrator: log the test client in as one."""
+    if "client" in request.fixturenames:
+        log_in(request.getfixturevalue("client"), admin=True)
 
 
 @pytest.fixture
@@ -28,6 +36,7 @@ def app(mlflow, tmp_path):
         MLFLOW_EXPERIMENT_PREFIX = "test-pharmagenix"
 
     app = create_app(TrackingConfig)
+    app.test_client_class = BrowserClient
     with app.app_context():
         db.create_all()
         yield app

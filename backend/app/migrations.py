@@ -13,12 +13,16 @@ JSON columns into their own tables, are handled here:
 import json
 
 from sqlalchemy import inspect, text
+from sqlalchemy.orm.attributes import flag_modified
 
 from .extensions import db
 from .models import Citation, Query
 from .services.interactions import record_interactions
 from .services.prompts import seed_default_template
 from .services.variants.biology import seed_pathways
+from .services.variants.pipeline import variant_url
+
+OLD_CIVIC_SEARCH = "civicdb.org/search/molecular-profiles"
 
 NEW_COLUMNS = [  # (table, column, DDL type, foreign key target or None)
     ("queries", "user_id", "INTEGER NULL", "users(id)"),
@@ -54,6 +58,7 @@ def upgrade(echo=print):
         added += len(query.interactions)
     db.session.commit()
     echo(f"query_interactions: {added} rows added for earlier queries")
+    echo(f"patient-variant links: {_fix_variant_urls()} updated (old CIViC search URL)")
     echo(f"gene_pathways: {seed_pathways()} rows")
     template = seed_default_template()
     echo(f"Database up to date. Active template: {template.name} v{template.version}")
@@ -82,6 +87,31 @@ def _move_citations(insp):
         for column in ("citations", "invalid_citations"):
             conn.execute(text(f"ALTER TABLE reports DROP COLUMN {column}"))
     return moved
+
+
+def _fix_variant_urls():
+    """Patient-variant items saved with CIViC's old search URL (it now opens the home page): rewrite the item URL in
+    queries.evidence and the copy in the citations table. Returns the number of items changed."""
+    changed = 0
+    for query in db.session.scalars(db.select(Query).where(Query.entity_type == "vcf", Query.evidence.is_not(None))):
+        evidence = _json(query.evidence) or {}
+        items = evidence.get("items") or []
+        civic_variants = {vid for i in items if i.get("kind") == "civic" for vid in i.get("variant_ids") or []}
+        urls = {}
+        for item in items:
+            if item.get("kind") == "variant" and OLD_CIVIC_SEARCH in (item.get("url") or ""):
+                item["url"] = urls[item["id"]] = variant_url(item["gene"], item.get("variant_id") in civic_variants)
+        if not urls:
+            continue
+        query.evidence = evidence
+        flag_modified(query, "evidence")  # changed in place: tell SQLAlchemy to save the JSON column
+        for report in query.reports:
+            for citation in report.citation_rows:
+                if citation.evidence_id in urls:
+                    citation.url = urls[citation.evidence_id]
+        changed += len(urls)
+    db.session.commit()
+    return changed
 
 
 def _json(value):

@@ -644,6 +644,11 @@ tr.clickable:hover td { background: var(--surface-2); }
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
 .stat { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
 .stat .num { font-size: 1.6rem; font-weight: 700; }
+table.confusion { width: auto; margin: 12px 0; }
+table.confusion caption { text-align: left; font-weight: 600; padding-bottom: 6px; }
+table.confusion td { text-align: center; min-width: 6em; font-variant-numeric: tabular-nums; }
+table.confusion td.hit { background: color-mix(in srgb, var(--ok, #2e7d32) 18%, transparent); font-weight: 700; }
+table.confusion td.miss { background: color-mix(in srgb, var(--danger, #c62828) 18%, transparent); font-weight: 700; }
 
 footer { text-align: center; color: var(--muted); font-size: 0.8rem; padding: 20px; }
 

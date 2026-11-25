@@ -26,7 +26,10 @@ def test_history_lists_only_own_queries(client, fake_sources):
     history = client.get("/api/queries?mine=1").get_json()
     assert [q["id"] for q in history] == [mine["id"]]
     assert history[0]["n_interactions"] == 2  # DGIdb + PharmGKB rows for CYP2C19–clopidogrel
-    assert len(client.get("/api/queries").get_json()) == 2  # the unfiltered list still shows both
+    assert [q["id"] for q in client.get("/api/queries").get_json()] == [mine["id"]]  # not an admin: own only
+    User.query.filter_by(email="alice@example.com").one().is_admin = True
+    db.session.commit()
+    assert len(client.get("/api/queries").get_json()) == 2  # an admin's unfiltered list shows everyone's
 
 
 def test_citations_are_rows(client, fake_sources):
@@ -90,3 +93,34 @@ def test_seed_demo_accounts_can_log_in(app, client):
     assert client.get("/api/admin/stats").status_code == 200
     resp = client.post("/api/auth/login", json={"email": "demo@pharmagenix.test", "password": "Demo1234!"})
     assert resp.get_json()["user"]["is_admin"] is False
+
+
+def test_upgrade_db_fixes_old_civic_variant_links(app):
+    """Patient-variant items saved with CIViC's old search URL (now the home page) get a working link."""
+    from app.migrations import upgrade
+    from app.models import Report
+    from app.services.variants.pipeline import variant_url
+
+    old = "https://civicdb.org/search/molecular-profiles?name="
+    items = [{"id": "E1", "kind": "variant", "gene": "PIK3CA", "variant_id": "V1", "url": old + "PIK3CA"},
+             {"id": "E2", "kind": "variant", "gene": "LRP1B", "variant_id": "V2", "url": old + "LRP1B"},
+             {"id": "E3", "kind": "civic", "variant_ids": ["V1"], "url": "https://civicdb.org/links/evidence_items/1"}]
+    query = Query(entities=["sample"], entity_type="vcf", relation_types=[], evidence={"items": items})
+    report = Report(provider="anthropic", model="m", content_md="[E1] [E2]")
+    query.reports.append(report)
+    db.session.add(query)
+    db.session.flush()
+    report.set_citations(["E1", "E2"], [], {i["id"]: i for i in items})
+    db.session.commit()
+
+    messages = []
+    upgrade(echo=messages.append)
+    db.session.expire_all()
+    saved = {i["id"]: i["url"] for i in db.session.get(Query, query.id).evidence["items"]}
+    assert saved["E1"] == variant_url("PIK3CA", True) == "https://civicdb.org/links/entrez_name/PIK3CA"
+    assert saved["E2"] == variant_url("LRP1B", False) and "ensembl.org" in saved["E2"]
+    assert {c.evidence_id: c.url for c in db.session.get(Report, report.id).citation_rows} == \
+        {"E1": saved["E1"], "E2": saved["E2"]}
+    assert "patient-variant links: 2 updated (old CIViC search URL)" in messages
+    upgrade(echo=messages.append)
+    assert messages.count("patient-variant links: 0 updated (old CIViC search URL)") == 1

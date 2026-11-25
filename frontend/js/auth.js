@@ -102,7 +102,17 @@ $("logout-btn").addEventListener("click", async () => {
   } finally {
     setUser(null);
     setOpen(false);
+    // A result on screen may hold patient data: leave it when logging out.
+    if (new URLSearchParams(location.search).has("q")) location.assign(location.pathname);
   }
+});
+
+// The server answered 401 (patient data needs an account, or the session has ended): ask the user to log in.
+document.addEventListener("auth:required", (event) => {
+  if (state.user) setUser(null);
+  setMode("login");
+  setOpen(true);
+  showError(event.detail || "Please log in.");
 });
 
 // Close the panel on Escape or a click outside it.

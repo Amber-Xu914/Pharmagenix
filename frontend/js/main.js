@@ -10,7 +10,7 @@ import { medicationList, renderSafety } from "./safety.js";
 import { renderReports } from "./summary.js";
 import { initTabs, revealTab, setTab } from "./tabs.js";
 import { DgiTable } from "./table.js";
-import { categoryColor, copyLink, el, labelTableCells } from "./util.js";
+import { categoryColor, copyLink, el, labelTableCells, latestOnly } from "./util.js";
 import { initVcf, renderVcfQuery, vcfEvidenceTarget } from "./vcf.js";
 import { cacheNotice, renderProfiles, renderResolution, renderTrace, renderVerdict } from "./workflow.js";
 
@@ -68,11 +68,26 @@ async function init() {
   $("copy-link").addEventListener("click", () => copyLink($("copy-link-status")));
 
   const queryId = new URLSearchParams(location.search).get("q");
-  if (queryId) {
-    try {
-      showQuery(await api.getQuery(queryId), { hash: location.hash });
-    } catch (err) {
-      showStatus(`Could not load query #${queryId}: ${err.message}`, "error");
+  if (queryId) await openSharedQuery(queryId);
+}
+
+/** A shared link (?q=12). A private result asks for a login (HTTP 401) and opens once the user has logged in. */
+async function openSharedQuery(queryId) {
+  const isLatest = viewRequest();
+  try {
+    const query = await api.getQuery(queryId);
+    if (isLatest()) showQuery(query, { hash: location.hash });
+  } catch (err) {
+    if (!isLatest()) return;
+    showStatus(`Could not load query #${queryId}: ${err.message}`, "error");
+    if (err.status === 401) {
+      const retry = (event) => {
+        if (!event.detail) return; // "logged out" (e.g. the page's own session check): keep waiting
+        document.removeEventListener("auth:change", retry);
+        hideStatus();
+        openSharedQuery(queryId);
+      };
+      document.addEventListener("auth:change", retry);
     }
   }
 }
@@ -124,15 +139,20 @@ function hideStatus() {
 // whichever finished last would be shown, not the one asked for last.
 const BUSY_BUTTONS = "#submit-btn, #vcf-submit, #ask-form button[type=submit], #vcf-ask-form button[type=submit]";
 
+// A slow shared-link load (?q=) must not replace a result the user asked for since: only the latest load is shown.
+const viewRequest = latestOnly();
+
 async function withBusy(message, task) {
   if (state.busy) return;
   state.busy = true;
+  const isLatest = viewRequest();
   const buttons = [...document.querySelectorAll(BUSY_BUTTONS)];
   buttons.forEach((b) => { b.disabled = true; });
   $("resolution").classList.add("hidden");
   showStatus(message, "info", true);
   try {
     const query = await task();
+    if (!isLatest()) return;
     hideStatus();
     showQuery(query);
   } catch (err) {

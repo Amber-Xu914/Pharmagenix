@@ -39,6 +39,9 @@ def create_app(config_class=Config):
     init_tracking(app)  # MLflow, only when MLFLOW_TRACKING_URI is set
     register_error_handlers(app)
 
+    from .csrf import init_csrf
+    init_csrf(app)
+
     # The frontend is plain static files; Flask serves them so no separate dev server is needed.
     @app.get("/")
     def index():
